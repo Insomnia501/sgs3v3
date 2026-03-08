@@ -1,0 +1,121 @@
+.lobby-page {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.lobby-bg {
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 20% 50%, rgba(139, 32, 8, 0.15) 0%, transparent 60%),
+        radial-gradient(ellipse at 80% 50%, rgba(8, 72, 160, 0.15) 0%, transparent 60%),
+        var(--color-bg);
+    z-index: 0;
+}
+
+.lobby-container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 420px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.lobby-header {
+    text-align: center;
+}
+
+.lobby-subtitle {
+    margin-top: 8px;
+    font-family: var(--font-ui);
+    font-size: 16px;
+    letter-spacing: 6px;
+    color: var(--color-text-muted);
+}
+
+.lobby-card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-label {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--color-text-muted);
+}
+
+.lobby-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.lobby-btn {
+    flex: 1;
+    padding: 12px;
+    font-size: 15px;
+    letter-spacing: 2px;
+}
+
+/* ── 等待界面 ── */
+.waiting-room {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 0;
+}
+
+.waiting-code-label {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--color-text-muted);
+    letter-spacing: 2px;
+}
+
+.waiting-code {
+    font-family: 'Courier New', monospace;
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: 8px;
+    color: var(--color-gold-light);
+    text-shadow: 0 0 20px rgba(212, 160, 48, 0.4);
+}
+
+.waiting-text {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    color: var(--color-text-muted);
+    margin-top: 8px;
+}
+
+.waiting-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-gold);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-top: 8px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
