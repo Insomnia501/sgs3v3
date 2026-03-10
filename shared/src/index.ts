@@ -415,12 +415,14 @@ export enum ResponseType {
     SKILL_LUANWU_PICK_TARGET = 'skill_luanwu_pick_target', // 乱武：选择出杀目标（多个最近）
     SKILL_RENDE_GIVE = 'skill_rende_give',                 // 仁德(刘备)：给牌
     SKILL_YINGHUN_CHOOSE = 'skill_yinghun_choose',         // 英魂(孙坚)：选目标+模式
+    SKILL_YINGHUN_DISCARD = 'skill_yinghun_discard',       // 英魂(孙坚)：目标弃牌
     SKILL_LIULI_REDIRECT = 'skill_liuli_redirect',         // 流离(大乔)：重定向杀
     SKILL_YINGHUN_OPTION = 'skill_yinghun_option',         // 英魂(孙坚)：选模式
     SKILL_ZHIJI_CHOICE = 'skill_zhiji_choice',             // 志继(姜维)：回血或摸牌
     HARVEST_PICK = 'harvest_pick',                         // 五谷丰登：选择一张牌
     AOE_DODGE = 'aoe_dodge',                               // 万箭齐发：出闪或受伤
     AOE_ATTACK = 'aoe_attack',                             // 南蛮入侵：出杀或受伤
+    PEACH_GARDEN_HEAL = 'peach_garden_heal',               // 桃园结义：回复体力（逐目标无懈）
     EQUIP_DOUBLE_SWORDS_CHOICE = 'equip_double_swords_choice', // 雌雄双股剑：目标选弃牌或让对方摸牌
     EQUIP_KYLIN_BOW_CHOICE = 'equip_kylin_bow_choice',     // 麒麟弓：选择弃哪匹马
     SKILL_EIGHT_TRIGRAMS = 'skill_eight_trigrams',          // 八卦阵：翻牌判定

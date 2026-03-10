@@ -345,13 +345,14 @@ function getUnitCandidates(
 // 武将回合管理
 // ─────────────────────────────────────────────────────────────
 
-/** 武将回合开始：判定 → 摸牌 → 出牌 */
+/** 武将回合开始：准备 → 判定 → 摸牌 → 出牌 */
 export function runTurnStart(state: GameState): void {
     const general = getActiveGeneral(state)
     if (!general) return
 
     const name = getGeneralName(general)
     addLog(state, `【${name}】回合开始`)
+    state.turnPhase = TurnPhase.TURN_START
     state.attackUsedThisTurn = 0
     general.skillsUsedThisTurn = []
     general.rendeGivenThisTurn = 0
@@ -410,6 +411,7 @@ export function runTurnStart(state: GameState): void {
     if (hasSkillById(general, 'jiangwei_zhiji') && !general.awakened && general.hand.length === 0) {
         general.awakened = true
         general.maxHp -= 1
+        if (general.hp > general.maxHp) general.hp = general.maxHp
         general.acquiredSkills.push('zhugeliang_guanxing')
         addLog(state, `【${name}】发动【志继】觉醒！减1体力上限，获得【观星】`)
 
@@ -429,6 +431,7 @@ export function runTurnStart(state: GameState): void {
     if (hasSkillById(general, 'sunce_hunzi') && !general.awakened && general.hp === 1) {
         general.awakened = true
         general.maxHp -= 1
+        if (general.hp > general.maxHp) general.hp = general.maxHp
         general.acquiredSkills.push('zhouyu_yingzi', 'sunjian_yinghun')
         addLog(state, `【${name}】发动【魂姿】觉醒！减1体力上限，获得【英姿】和【英魂】`)
     }
@@ -443,6 +446,22 @@ export function runTurnStart(state: GameState): void {
                 targetGeneralIndex: state.generals.indexOf(general),
                 context: {
                     lostHp,
+                },
+            })
+        }
+    }
+
+    // ── 弘援（诸葛瑾）：准备阶段询问，是否少摸1张让友方各摸1张
+    if (hasSkillById(general, 'zhugejin_hongyuan')) {
+        const allies = state.generals.filter(g => g.alive && g.faction === general.faction && g !== general)
+        if (allies.length > 0) {
+            state.pendingResponseQueue.push({
+                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                targetGeneralIndex: state.generals.indexOf(general),
+                context: {
+                    skillId: 'zhugejin_hongyuan',
+                    skillName: '弘援',
+                    description: '自己摸1张牌，至多2名己方角色各摸1张',
                 },
             })
         }
@@ -464,6 +483,12 @@ export function runTurnStart(state: GameState): void {
             })
             addLog(state, `【${name}】发动【观星】，观看了${count}张牌`)
         }
+    }
+
+    // ── 如果准备阶段有待处理的技能（洛神/观星/英魂等），等待完成后再继续
+    // 完成后由各响应 handler 中的 continueFromPrepPhase() 推进到判定阶段
+    if (state.pendingResponseQueue.length > 0) {
+        return
     }
 
     // ── 神速（夏侯渊）：回合开始选择跳阶段视为杀
@@ -508,6 +533,7 @@ export function runTurnStart(state: GameState): void {
                         skillId: 'zhangliao_tuxi',
                         skillName: '突袭',
                         description: `代替摸牌，获取至多2名角色的各一张手牌`,
+                        skipAction,
                     },
                 })
                 return // 等待玩家响应，后续由 handleRespond 继续
@@ -524,41 +550,25 @@ export function runTurnStart(state: GameState): void {
                 drawCount = 3
             }
 
-            // 弘援（诸葛瑾）：可选择少摸1张，令至多2名己方角色各摸1张
-            if (hasSkillById(general, 'zhugejin_hongyuan')) {
+            // 弘援（诸葛瑾）：准备阶段选择了弘援，自己只摸1张，友方各摸1张
+            if ((general as any).hongyuanActivated) {
+                delete (general as any).hongyuanActivated
+                const drawn = drawCards(state, 1)
+                general.hand.push(...drawn)
+                addLog(state, `【${name}】发动【弘援】，自己摸了1张牌`)
+
                 const allies = state.generals.filter(g => g.alive && g.faction === general.faction && g !== general)
-                if (allies.length > 0) {
-                    // 先正常摸牌（不含弘援减少）
-                    const drawn = drawCards(state, drawCount)
-                    general.hand.push(...drawn)
-                    addLog(state, `【${name}】摸了 ${drawn.length} 张牌${drawCount > 2 ? '（英姿+1）' : ''}`)
-
-                    // 推送确认：是否发动弘援（弃1张牌+友方各摸1张）
-                    state.pendingResponseQueue.push({
-                        type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                        targetGeneralIndex: state.generals.indexOf(general),
-                        context: {
-                            skillId: 'zhugejin_hongyuan',
-                            skillName: '弘援',
-                            description: '弃1张牌，至多2名己方角色各摸1张',
-                        },
-                    })
-                    // 直接进入出牌阶段（弘援确认在出牌前处理）
-                    if (!skipAction) {
-                        state.turnPhase = TurnPhase.ACTION
-                    } else {
-                        state.turnPhase = TurnPhase.DISCARD
-                        if (general.hand.length <= general.hp) {
-                            finishTurn(state)
-                        }
-                    }
-                    return
+                const shareCount = Math.min(2, allies.length)
+                for (let i = 0; i < shareCount; i++) {
+                    const bonus = drawCards(state, 1)
+                    allies[i].hand.push(...bonus)
+                    addLog(state, `【${getGeneralName(allies[i])}】因【弘援】摸了1张牌`)
                 }
+            } else {
+                const drawn = drawCards(state, drawCount)
+                general.hand.push(...drawn)
+                addLog(state, `【${name}】摸了 ${drawn.length} 张牌${drawCount > 2 ? '（英姿+1）' : ''}`)
             }
-
-            const drawn = drawCards(state, drawCount)
-            general.hand.push(...drawn)
-            addLog(state, `【${name}】摸了 ${drawn.length} 张牌${drawCount > 2 ? '（英姿+1）' : ''}`)
         }
     }
 
@@ -658,6 +668,37 @@ export function continueTurnFromJudge(
             finishTurn(state)
         }
     }
+}
+
+/**
+ * 准备阶段技能全部完成后，继续推进回合到判定阶段。
+ * 由各准备阶段响应 handler（观星、洛神、英魂等）在 shift() 后调用。
+ */
+export function continueFromPrepPhase(state: GameState): void {
+    // 队列中还有其他准备阶段技能待处理，不推进
+    if (state.pendingResponseQueue.length > 0) return
+    // 只在准备阶段调用此函数
+    if (state.turnPhase !== TurnPhase.TURN_START) return
+
+    const general = getActiveGeneral(state)
+    if (!general) return
+
+    // 神速（夏侯渊）：准备阶段技能结束后，仍需询问神速
+    if (hasSkillById(general, 'xiahoyuan_shensu')) {
+        state.pendingResponseQueue.push({
+            type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+            targetGeneralIndex: state.generals.indexOf(general),
+            context: {
+                skillId: 'xiahoyuan_shensu_1',
+                skillName: '神速一',
+                description: '跳过判定和摸牌阶段，视为对一名角色使用一张杀',
+            },
+        })
+        return // 等待神速响应，后续由 handler 继续推进回合
+    }
+
+    // 直接进入判定阶段
+    continueTurnFromJudge(state, false, false, false)
 }
 
 /** 判定阶段：处理判定区延时锦囊（后放先判）
@@ -815,27 +856,9 @@ export function continueJudgePhase(
 
     // 如果没有被新的介入打断，继续回合流程
     if (state.pendingResponseQueue.length === 0 || state.pendingResponseQueue[0].type !== ResponseType.JUDGE_INTERVENE) {
-        // 继续回合：摸牌→出牌
-        if (!finalResult.skipDraw) {
-            state.turnPhase = TurnPhase.DRAW
-            let drawCount = 2
-            if (hasYingziSkill(judgingGeneral)) drawCount = 3
-
-            // 突袭替换逻辑（已在 runTurnStart 中处理，此处简化跳过）
-            const drawn = drawCards(state, drawCount)
-            judgingGeneral.hand.push(...drawn)
-            addLog(state, `【${getGeneralName(judgingGeneral)}】摸了${drawCount}张牌`)
-        }
-
-        if (!finalResult.skipAction) {
-            state.turnPhase = TurnPhase.ACTION
-            addLog(state, `【${getGeneralName(judgingGeneral)}】进入出牌阶段`)
-        } else {
-            state.turnPhase = TurnPhase.DISCARD
-            if (judgingGeneral.hand.length <= judgingGeneral.hp) {
-                finishTurn(state)
-            }
-        }
+        // 重用 continueTurnFromJudge 的摸牌/出牌逻辑（包含弘援、突袭等技能检查）
+        // skipJudge=true（判定已结算完），传入 skipDraw 和 skipAction
+        continueTurnFromJudge(state, true, finalResult.skipDraw, finalResult.skipAction)
     }
 }
 
@@ -901,7 +924,7 @@ export function handleDiscard(
 }
 
 /** 完成当前武将的回合，推进到同行动单元内下一武将，或推进大回合步骤 */
-function finishTurn(state: GameState): void {
+export function finishTurn(state: GameState): void {
     const general = getActiveGeneral(state)
     if (general) {
         // 闭月（貂蝉）：结束阶段摸1牌

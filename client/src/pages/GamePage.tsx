@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import {
@@ -73,7 +73,10 @@ function ACTIVE_SKILLS_FOR(generalId: string): SkillDef[] {
         diaochan: [{ id: 'diaochan_lijian', name: '离间', desc: '限一次：弃1牌，令两名男性决斗' }],
         zhouyu: [{ id: 'zhouyu_fanjian', name: '反间', desc: '限一次：目标选花色→获你一牌→不同受1伤' }],
         liubei: [{ id: 'liubei_rende', name: '仁德', desc: '将手牌给其他角色，每给2张回1血' }],
-        guanyu: [{ id: 'guanyu_zhongyi', name: '忠义', desc: '限定：置红牌，己方杀+1伤' }],
+        guanyu: [
+            { id: 'guanyu_wusheng', name: '武圣', desc: '将一张红色牌当杀使用' },
+            { id: 'guanyu_zhongyi', name: '忠义', desc: '限定：置红牌，己方杀+1伤' },
+        ],
         jiaxu: [{ id: 'jiaxu_luanwu', name: '乱武', desc: '限定：所有其他角色出杀或失1血' }],
         ganning: [{ id: 'ganning_qixi', name: '奇袭', desc: '黑色牌当过河拆桥' }],
         xuhuang: [{ id: 'xuhuang_duanliang', name: '断粮', desc: '黑色基本/装备牌当兵粮寸断' }],
@@ -118,8 +121,10 @@ function GeneralPanel({
                 {general.seatRole === SeatRole.COMMANDER && <span className="commander-badge">帅</span>}
             </div>
             <div className="general-info">
-                <div className="general-name">{name}</div>
-                <div className="general-hp-text">{general.hp}/{general.maxHp}</div>
+                <div className="general-name">
+                    <span>{name}</span>
+                    <span className="general-hp-text">{general.hp}/{general.maxHp}</span>
+                </div>
                 <HpBar hp={general.hp} maxHp={general.maxHp} />
                 <div className="general-hand-count">手牌: {general.handCount}</div>
                 {/* 装备区 */}
@@ -192,6 +197,36 @@ export default function GamePage() {
     const [guanxingBottom, setGuanxingBottom] = useState<string[]>([])
     // 技能激活状态：点击技能按钮后进入激活模式，选牌/选目标后点确认发送
     const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
+    // 英魂弃牌：用于选择装备区的装备一起弃
+    const [selectedEquipSlots, setSelectedEquipSlots] = useState<string[]>([])
+
+    // ── 背景音乐 ──
+    const bgmRef = useRef<HTMLAudioElement | null>(null)
+    useEffect(() => {
+        const audio = new Audio('/bgm.flac')
+        audio.loop = true
+        audio.volume = 0.3
+        bgmRef.current = audio
+
+        // 尝试自动播放
+        const playPromise = audio.play()
+        if (playPromise) {
+            playPromise.catch(() => {
+                // 浏览器阻止自动播放，等待用户首次点击后播放
+                const resumeOnClick = () => {
+                    audio.play().catch(() => {})
+                    document.removeEventListener('click', resumeOnClick)
+                }
+                document.addEventListener('click', resumeOnClick)
+            })
+        }
+
+        return () => {
+            audio.pause()
+            audio.src = ''
+            bgmRef.current = null
+        }
+    }, [])
 
     if (!gameState) return null
 
@@ -225,6 +260,14 @@ export default function GamePage() {
     // 查看哪个武将的手牌（点击己方武将切换）
     // 优先级：手动选择 > 需要响应的武将 > 当前行动武将
     const [viewingGeneralIdx, setViewingGeneralIdx] = useState<number | null>(null)
+    // 当 activeGeneralIndex 变化时，重置手动选择的查看目标
+    const prevActiveIdx = useRef(activeGeneralIndex)
+    useEffect(() => {
+        if (prevActiveIdx.current !== activeGeneralIndex) {
+            setViewingGeneralIdx(null)
+            prevActiveIdx.current = activeGeneralIndex
+        }
+    }, [activeGeneralIndex])
     const respondingIdx = myPendingResponse ? pendingResponse!.targetGeneralIndex : null
     const displayGeneralIdx = viewingGeneralIdx ?? respondingIdx ?? activeGeneralIndex
     const displayGeneral = displayGeneralIdx >= 0 ? generals[displayGeneralIdx] : null
@@ -238,11 +281,29 @@ export default function GamePage() {
         emit.chooseActionUnit({ unit })
     }
 
+    // ── AOE 方向选择 ──
     const [aoeDirection, setAoeDirection] = useState<'clockwise' | 'counterclockwise'>('clockwise')
 
     // 检查当前选中的牌是否为AOE
     const selectedCard = displayGeneral?.hand?.find(c => c.id === selectedCardIds[0])
     const isAoeCard = selectedCard && ['barbarians', 'arrows', 'peach_garden', 'harvest'].includes(selectedCard.name)
+
+    // 计算AOE方向标签：使用相邻武将名称
+    const aoeDirectionLabels = (() => {
+        if (!isAoeCard || activeGeneralIndex < 0) return null
+        const alive = generals.filter(g => g.alive)
+        const caster = generals[activeGeneralIndex]
+        if (!caster) return null
+        const casterAliveIdx = alive.indexOf(caster)
+        if (casterAliveIdx === -1 || alive.length <= 1) return null
+        const n = alive.length
+        const cwFirst = alive[(casterAliveIdx + 1) % n]
+        const ccwFirst = alive[(casterAliveIdx - 1 + n) % n]
+        return {
+            clockwise: GENERAL_NAMES[cwFirst.generalId] ?? cwFirst.generalId,
+            counterclockwise: GENERAL_NAMES[ccwFirst.generalId] ?? ccwFirst.generalId,
+        }
+    })()
 
     function handleUseCard() {
         if (selectedCardIds.length === 0) return
@@ -294,6 +355,7 @@ export default function GamePage() {
 
     return (
         <div className="game-page">
+          <div className="game-main">
             {/* 对手武将区 */}
             <div className="generals-row opp-row">
                 {oppGenerals.map((g) => {
@@ -492,6 +554,7 @@ export default function GamePage() {
                         [ResponseType.SKILL_YINGHUN_CHOOSE]: `${whoName}：英魂 — 选一名角色和模式`,
                         [ResponseType.SKILL_TIANXIANG_CHOOSE]: `${whoName}：天香 — 选择转移伤害的目标`,
                         [ResponseType.SKILL_LIULI_REDIRECT]: `${whoName}：流离 — 选择杀的转移目标`,
+                        [ResponseType.SKILL_YINGHUN_DISCARD]: `${whoName}：英魂 — 弃${(pendingResponse.context as any)?.discardCount ?? 1}张牌（手牌/装备）`,
                     }
                     const desc = descMap[pendingResponse.type] ?? `等待${whoName}响应`
 
@@ -502,11 +565,6 @@ export default function GamePage() {
                     )
                 })()}
 
-                <div className="action-log">
-                    {[...log].reverse().slice(0, 8).map((entry, i) => (
-                        <div key={i} className="log-entry">{highlightLogText(entry.text)}</div>
-                    ))}
-                </div>
             </div>
 
             {/* 己方武将区 */}
@@ -525,9 +583,21 @@ export default function GamePage() {
                             key={g.generalId} general={g} index={idx}
                             isActive={idx === activeGeneralIndex}
                             isTarget={selectedTargets.includes(idx)}
-                            onSelect={(needTargetPick || needMyTarget)
+                            onSelect={(needTargetPick)
                                 ? toggleTargetSelection
-                                : (i) => setViewingGeneralIdx(i === viewingGeneralIdx ? null : i)}
+                                : (i) => {
+                                    if (needMyTarget) {
+                                        // 已选牌或激活技能时，点击己方武将 = 选为目标
+                                        if (selectedCardIds.length > 0 || activeSkillId) {
+                                            toggleTargetSelection(i)
+                                        } else {
+                                            // 未选牌时，点击己方武将 = 切换查看手牌
+                                            setViewingGeneralIdx(i === activeGeneralIndex ? null : i)
+                                        }
+                                    } else {
+                                        setViewingGeneralIdx(i === viewingGeneralIdx ? null : i)
+                                    }
+                                }}
                             isViewing={isViewing}
                         />
                     )
@@ -561,16 +631,16 @@ export default function GamePage() {
                     {isActionPhase && isMyTurn && isViewingActive && !gameState.pendingResponse && !gameState.negateWindow && (
                         <>
                             <button className="btn btn-primary" disabled={selectedCardIds.length === 0} onClick={handleUseCard}>出牌</button>
-                            {/* AOE方向选择 */}
-                            {isAoeCard && (
+                            {/* AOE方向选择：显示相邻武将名表示方向 */}
+                            {isAoeCard && aoeDirectionLabels && (
                                 <>
                                     <button className={`btn ${aoeDirection === 'clockwise' ? 'btn-skill' : 'btn-secondary'}`}
                                         onClick={() => setAoeDirection('clockwise')}>
-                                        → 顺时针
+                                        → {aoeDirectionLabels.clockwise}方向
                                     </button>
                                     <button className={`btn ${aoeDirection === 'counterclockwise' ? 'btn-skill' : 'btn-secondary'}`}
                                         onClick={() => setAoeDirection('counterclockwise')}>
-                                        ← 逆时针
+                                        → {aoeDirectionLabels.counterclockwise}方向
                                     </button>
                                 </>
                             )}
@@ -705,6 +775,15 @@ export default function GamePage() {
                                     <button className="btn btn-skill" disabled={selectedCardIds.length === 0}
                                         onClick={() => handleRespond(selectedCardIds[0], { action: 'confirm' })}>
                                         弃牌发动流离
+                                    </button>
+                                    <button className="btn"
+                                        onClick={() => handleRespond(undefined, { action: 'decline' })}>放弃</button>
+                                </>
+                            ) : (pendingResponse.context as any)?.skillId === 'xiaoqiao_tianxiang' ? (
+                                <>
+                                    <button className="btn btn-skill" disabled={selectedCardIds.length === 0}
+                                        onClick={() => handleRespond(selectedCardIds[0], { action: 'confirm' })}>
+                                        选♥牌发动天香
                                     </button>
                                     <button className="btn"
                                         onClick={() => handleRespond(undefined, { action: 'decline' })}>放弃</button>
@@ -850,6 +929,46 @@ export default function GamePage() {
                             </>
                         )
                     })()}
+                    {/* 英魂弃牌：选手牌/装备 */}
+                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_YINGHUN_DISCARD && (() => {
+                        const ctx = pendingResponse.context as any
+                        const discardCount = ctx.discardCount ?? 1
+                        const myGen = gameState.generals[pendingResponse.targetGeneralIndex]
+                        const totalSelected = selectedCardIds.length + selectedEquipSlots.length
+                        const toggleEquip = (slot: string) => {
+                            setSelectedEquipSlots(prev =>
+                                prev.includes(slot) ? prev.filter(s => s !== slot) : [...prev, slot]
+                            )
+                        }
+                        return (
+                            <>
+                                <span className="skill-confirm-label">英魂弃牌：选{discardCount}张（已选{totalSelected}）</span>
+                                {myGen?.equip?.weapon && (
+                                    <button className={`btn ${selectedEquipSlots.includes('weapon') ? 'btn-skill' : 'btn-secondary'}`}
+                                        onClick={() => toggleEquip('weapon')}>武器</button>
+                                )}
+                                {myGen?.equip?.armor && (
+                                    <button className={`btn ${selectedEquipSlots.includes('armor') ? 'btn-skill' : 'btn-secondary'}`}
+                                        onClick={() => toggleEquip('armor')}>防具</button>
+                                )}
+                                {myGen?.equip?.plus_horse && (
+                                    <button className={`btn ${selectedEquipSlots.includes('plus_horse') ? 'btn-skill' : 'btn-secondary'}`}
+                                        onClick={() => toggleEquip('plus_horse')}>+1马</button>
+                                )}
+                                {myGen?.equip?.minus_horse && (
+                                    <button className={`btn ${selectedEquipSlots.includes('minus_horse') ? 'btn-skill' : 'btn-secondary'}`}
+                                        onClick={() => toggleEquip('minus_horse')}>-1马</button>
+                                )}
+                                <button className="btn btn-skill" disabled={totalSelected !== discardCount}
+                                    onClick={() => {
+                                        emit.respond({ cardIds: selectedCardIds, equipSlots: selectedEquipSlots } as any)
+                                        setSelectedEquipSlots([])
+                                    }}>
+                                    确认弃牌
+                                </button>
+                            </>
+                        )
+                    })()}
                     {/* 反馈：选来源的牌 */}
                     {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_FANKUI_PICK && (() => {
                         const ctx = pendingResponse.context as any
@@ -882,18 +1001,22 @@ export default function GamePage() {
                     {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_GUANXING_ARRANGE && (() => {
                         const ctx = pendingResponse.context as any
                         const allCards = (ctx.guanxingCards ?? []) as any[]
-                        // 初始化：如果 guanxingTop + guanxingBottom 为空，将所有牌放入 top
+                        const allCardIds = allCards.map((c: any) => c.id)
+                        // 初始化：如果 guanxingTop/Bottom 为空或包含上一轮的旧 ID，重新初始化
                         const allAssigned = [...guanxingTop, ...guanxingBottom]
-                        const unassigned = allCards.filter((c: any) => !allAssigned.includes(c.id))
-                        if (unassigned.length > 0 && guanxingTop.length === 0 && guanxingBottom.length === 0) {
+                        const hasStaleIds = allAssigned.length > 0 && !allAssigned.every(id => allCardIds.includes(id))
+                        if (hasStaleIds || (allAssigned.length === 0 && allCards.length > 0)) {
                             // 延迟设置以避免渲染中 setState
-                            setTimeout(() => setGuanxingTop(allCards.map((c: any) => c.id)), 0)
+                            setTimeout(() => {
+                                setGuanxingTop(allCardIds)
+                                setGuanxingBottom([])
+                            }, 0)
                         }
                         const suitSym = (s: string) => ({ heart: '♥', diamond: '♦', spade: '♠', club: '♣' }[s] ?? s)
                         const renderCard = (id: string) => {
                             const c = allCards.find((x: any) => x.id === id)
                             if (!c) return id
-                            return `${suitSym(c.suit)}${c.value} ${c.name}`
+                            return `${suitSym(c.suit)}${c.value} ${CARD_NAMES[c.name as keyof typeof CARD_NAMES] ?? c.name}`
                         }
                         const moveToBottom = (id: string) => {
                             setGuanxingTop(prev => prev.filter(x => x !== id))
@@ -919,7 +1042,7 @@ export default function GamePage() {
                         const allPlaced = total === allCards.length && allCards.length > 0
                         return (
                             <div className="guanxing-panel" style={{ background: 'rgba(0,0,0,0.85)', padding: '12px', borderRadius: '8px', marginBottom: '8px' }}>
-                                <div style={{ display: 'flex', gap: '16px' }}>
+                                <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
                                     <div style={{ flex: 1 }}>
                                         <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#ffd700' }}>牌堆顶（先摸到）</div>
                                         {guanxingTop.map((id, idx) => (
@@ -944,15 +1067,17 @@ export default function GamePage() {
                                         ))}
                                         {guanxingBottom.length === 0 && <div style={{ color: '#888', fontSize: '12px' }}>（空）</div>}
                                     </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: '70px' }}>
+                                        <button className="btn btn-skill" disabled={!allPlaced}
+                                            onClick={() => {
+                                                emit.respond({ topCardIds: guanxingTop, bottomCardIds: guanxingBottom } as any)
+                                                setGuanxingTop([])
+                                                setGuanxingBottom([])
+                                            }}>
+                                            确认排列
+                                        </button>
+                                    </div>
                                 </div>
-                                <button className="btn btn-skill" style={{ marginTop: '8px' }} disabled={!allPlaced}
-                                    onClick={() => {
-                                        emit.respond({ topCardIds: guanxingTop, bottomCardIds: guanxingBottom } as any)
-                                        setGuanxingTop([])
-                                        setGuanxingBottom([])
-                                    }}>
-                                    确认排列
-                                </button>
                             </div>
                         )
                     })()}
@@ -1120,7 +1245,8 @@ export default function GamePage() {
                         && pendingResponse?.type !== ResponseType.SKILL_GUANXING_ARRANGE
                         && pendingResponse?.type !== ResponseType.SKILL_YINGHUN_CHOOSE
                         && pendingResponse?.type !== ResponseType.SKILL_TIANXIANG_CHOOSE
-                        && pendingResponse?.type !== ResponseType.SKILL_LIULI_REDIRECT && (
+                        && pendingResponse?.type !== ResponseType.SKILL_LIULI_REDIRECT
+                        && pendingResponse?.type !== ResponseType.SKILL_YINGHUN_DISCARD && (
                             <>
                                 {/* 八卦阵按钮：在 DODGE / AOE_DODGE 响应中 */}
                                 {(pendingResponse?.type === ResponseType.DODGE || pendingResponse?.type === ResponseType.AOE_DODGE) && (() => {
@@ -1140,6 +1266,16 @@ export default function GamePage() {
                         )}
                 </div>
             </div>
+          </div>
+          {/* 右侧日志面板 */}
+          <div className="game-log-sidebar">
+            <div className="game-log-sidebar-header">游戏日志</div>
+            <div className="action-log">
+                {[...log].reverse().map((entry, i) => (
+                    <div key={i} className="log-entry">{highlightLogText(entry.text)}</div>
+                ))}
+            </div>
+          </div>
         </div>
     )
 }

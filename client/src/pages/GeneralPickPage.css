@@ -8,7 +8,7 @@
 }
 
 .pick-header {
-    padding: 16px 24px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--color-border);
     display: flex;
     align-items: center;
@@ -64,9 +64,9 @@
 .pick-pool {
     flex: 1;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    padding: 16px;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+    padding: 8px;
     overflow-y: auto;
     align-content: start;
 }
@@ -76,12 +76,12 @@
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: 12px;
+    padding: 4px;
     cursor: default;
     transition: all var(--transition);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 3px;
 }
 
 .general-pick-card.selectable {
@@ -102,7 +102,7 @@
 
 .gpc-card-portrait {
     width: 100%;
-    height: 90px;
+    height: 140px;
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     overflow: hidden;
     background: var(--color-surface-2);
@@ -156,17 +156,17 @@
 .gpc-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
 }
 
 .gpc-name {
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--color-gold-light);
 }
 
 .gpc-hp {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--color-red);
 }
 
@@ -178,12 +178,12 @@
 }
 
 .gpc-skill-tag {
-    padding: 2px 6px;
+    padding: 1px 4px;
     background: var(--color-surface-2);
     border: 1px solid var(--color-border-light);
     border-radius: var(--radius-sm);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 10px;
     color: var(--color-text-muted);
 }
 
@@ -201,12 +201,12 @@
 
 /* ── 侧边栏 ── */
 .pick-sidebar {
-    width: 200px;
+    width: 160px;
     border-left: 1px solid var(--color-border);
-    padding: 16px;
+    padding: 10px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 14px;
     overflow-y: auto;
 }
 

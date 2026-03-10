@@ -39,8 +39,11 @@ function broadcastGameState(io: SocketIOServer, room: Room) {
     // 广播前检查是否需要为 AOE 的下一个目标开无懈窗口
     checkAndOpenNegateWindow(gameState)
 
-    // 广播前自动处理 autoExecute 的 pending response（如苦肉摸牌）
+    // 广播前自动处理 autoExecute 的 pending response（如苦肉摸牌、桃园结义回血）
     processAutoExecutePending(gameState)
+
+    // 自动处理可能移除了 pending，暴露出下一个需要无懈窗口的目标
+    checkAndOpenNegateWindow(gameState)
 
     for (const playerId of Object.keys(gameState.players)) {
         const view = toClientView(gameState, playerId)
