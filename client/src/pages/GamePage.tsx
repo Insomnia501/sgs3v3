@@ -15,6 +15,7 @@ import {
 } from 'sgs3v3-shared'
 import { emit } from '../socket/client'
 import { GENERAL_IMAGE } from '../data/generalImages'
+import { useTooltip, generalTooltipById, cardTooltipContent, TooltipBubble } from '../components/Tooltip'
 import './GamePage.css'
 
 const GENERAL_NAMES: Record<string, string> = {
@@ -97,6 +98,7 @@ function HpBar({ hp, maxHp }: { hp: number; maxHp: number }) {
 
 function GeneralPanel({
     general, index, isActive, isTarget, onSelect, isViewing,
+    onTooltipEnter, onTooltipMove, onTooltipLeave,
 }: {
     general: GeneralClientView
     index: number
@@ -104,6 +106,9 @@ function GeneralPanel({
     isTarget: boolean
     onSelect?: (i: number) => void
     isViewing?: boolean
+    onTooltipEnter?: (e: React.MouseEvent) => void
+    onTooltipMove?: (e: React.MouseEvent) => void
+    onTooltipLeave?: () => void
 }) {
     const factionCls = general.faction === Faction.WARM ? 'warm' : 'cool'
     const imgSrc = GENERAL_IMAGE[general.generalId]
@@ -112,6 +117,9 @@ function GeneralPanel({
         <div
             className={`general-panel faction-${factionCls} ${isActive ? 'active' : ''} ${isTarget ? 'target' : ''} ${!general.alive ? 'dead' : ''} ${isViewing ? 'viewing' : ''}`}
             onClick={() => onSelect?.(index)}
+            onMouseEnter={onTooltipEnter}
+            onMouseMove={onTooltipMove}
+            onMouseLeave={onTooltipLeave}
         >
             <div className="general-card-img">
                 {imgSrc
@@ -153,10 +161,20 @@ function GeneralPanel({
     )
 }
 
-function PlayingCard({ card, selected, onClick, dimmed }: { card: Card; selected: boolean; onClick?: () => void; dimmed?: boolean }) {
+function PlayingCard({ card, selected, onClick, dimmed, onTooltipEnter, onTooltipMove, onTooltipLeave }: {
+    card: Card; selected: boolean; onClick?: () => void; dimmed?: boolean;
+    onTooltipEnter?: (e: React.MouseEvent) => void;
+    onTooltipMove?: (e: React.MouseEvent) => void;
+    onTooltipLeave?: () => void;
+}) {
     const red = isRedSuit(card.suit)
     return (
-        <div className={`playing-card ${selected ? 'selected' : ''} ${red ? 'red' : 'black'} ${dimmed ? 'dimmed' : ''}`} onClick={onClick}>
+        <div className={`playing-card ${selected ? 'selected' : ''} ${red ? 'red' : 'black'} ${dimmed ? 'dimmed' : ''}`}
+            onClick={onClick}
+            onMouseEnter={onTooltipEnter}
+            onMouseMove={onTooltipMove}
+            onMouseLeave={onTooltipLeave}
+        >
             <div className="card-corner top">
                 <div className={`card-suit ${red ? 'suit-red' : ''}`}>{getSuitSymbol(card.suit)}</div>
                 <div className="card-value">{getValueStr(card.value)}</div>
@@ -199,6 +217,8 @@ export default function GamePage() {
     const [activeSkillId, setActiveSkillId] = useState<string | null>(null)
     // 英魂弃牌：用于选择装备区的装备一起弃
     const [selectedEquipSlots, setSelectedEquipSlots] = useState<string[]>([])
+    // 气泡提示
+    const { tooltip, onEnter: tooltipEnter, onMove: tooltipMove, onLeave: tooltipLeave } = useTooltip(1500)
 
     // ── 背景音乐 ──
     const bgmRef = useRef<HTMLAudioElement | null>(null)
@@ -354,6 +374,7 @@ export default function GamePage() {
     }
 
     return (
+        <>
         <div className="game-page">
           <div className="game-main">
             {/* 对手武将区 */}
@@ -366,6 +387,9 @@ export default function GamePage() {
                             isActive={idx === activeGeneralIndex}
                             isTarget={selectedTargets.includes(idx)}
                             onSelect={toggleTargetSelection}
+                            onTooltipEnter={(e) => { const c = generalTooltipById(g.generalId); if (c) tooltipEnter(e, c) }}
+                            onTooltipMove={tooltipMove}
+                            onTooltipLeave={tooltipLeave}
                         />
                     )
                 })}
@@ -599,6 +623,9 @@ export default function GamePage() {
                                     }
                                 }}
                             isViewing={isViewing}
+                            onTooltipEnter={(e) => { const c = generalTooltipById(g.generalId); if (c) tooltipEnter(e, c) }}
+                            onTooltipMove={tooltipMove}
+                            onTooltipLeave={tooltipLeave}
                         />
                     )
                 })}
@@ -621,8 +648,39 @@ export default function GamePage() {
                                     selected={selectedCardIds.includes(card.id)}
                                     onClick={() => canSelectCards && toggleCardSelection(card.id)}
                                     dimmed={!canSelectCards}
+                                    onTooltipEnter={(e) => { const c = cardTooltipContent(card.name); if (c) tooltipEnter(e, c) }}
+                                    onTooltipMove={tooltipMove}
+                                    onTooltipLeave={tooltipLeave}
                                 />
                             ))}
+                            {/* 技能激活时显示可选装备牌 */}
+                            {activeSkillId && (() => {
+                                // 定义哪些技能可以用装备牌
+                                const equipSkillFilter: Record<string, (card: Card) => boolean> = {
+                                    'ganning_qixi': (c) => c.suit === CardSuit.SPADE || c.suit === CardSuit.CLUB,
+                                    'guanyu_wusheng': (c) => c.suit === CardSuit.HEART || c.suit === CardSuit.DIAMOND,
+                                }
+                                const filter = equipSkillFilter[activeSkillId]
+                                if (!filter || !displayGeneral) return null
+                                const equipCards: Card[] = []
+                                for (const slot of ['weapon', 'armor', 'plus_horse', 'minus_horse'] as const) {
+                                    const card = displayGeneral.equip[slot]
+                                    if (card && filter(card)) equipCards.push(card)
+                                }
+                                if (equipCards.length === 0) return null
+                                return (
+                                    <div className="equip-select-row">
+                                        <span className="equip-select-label">装备区：</span>
+                                        {equipCards.map(card => (
+                                            <PlayingCard
+                                                key={card.id} card={card}
+                                                selected={selectedCardIds.includes(card.id)}
+                                                onClick={() => toggleCardSelection(card.id)}
+                                            />
+                                        ))}
+                                    </div>
+                                )
+                            })()}
                         </>
                     ) : null}
                 </div>
@@ -670,10 +728,12 @@ export default function GamePage() {
                             {/* 技能激活中：显示确认/取消按钮 */}
                             {activeSkillId && (() => {
                                 const skillDef = activeGeneral ? ACTIVE_SKILLS_FOR(activeGeneral.generalId).find(s => s.id === activeSkillId) : null
+                                const equipSkillNames: Record<string, string> = { equip_zhangba_spear: '丈八蛇矛' }
+                                const displayName = skillDef?.name ?? equipSkillNames[activeSkillId] ?? activeSkillId
                                 return (
                                     <>
                                         <span style={{ color: '#ffd700', fontWeight: 'bold', marginRight: '8px' }}>
-                                            {skillDef?.name ?? activeSkillId} 激活中
+                                            {displayName} 激活中{activeSkillId === 'equip_zhangba_spear' ? '（选2张手牌+1个目标）' : ''}
                                         </span>
                                         <button className="btn btn-skill" onClick={handleConfirmSkill}>确认发动</button>
                                         <button className="btn btn-secondary" onClick={handleCancelSkill}>取消</button>
@@ -681,15 +741,13 @@ export default function GamePage() {
                                 )
                             })()}
                             {/* 丈八蛇矛装备技能 */}
-                            {activeGeneral?.equip?.weapon?.name === 'zhangba_spear' && (
+                            {!activeSkillId && activeGeneral?.equip?.weapon?.name === 'zhangba_spear' && (
                                 <button
-                                    className={`btn btn-skill ${selectedCardIds.length < 2 || selectedTargets.length === 0 ? 'btn-disabled' : ''}`}
-                                    disabled={selectedCardIds.length < 2 || selectedTargets.length === 0}
-                                    onClick={() => emit.useSkill({
-                                        skillId: 'equip_zhangba_spear',
-                                        cardIds: selectedCardIds.slice(0, 2),
-                                        targetIndices: selectedTargets,
-                                    })}
+                                    className="btn btn-skill"
+                                    onClick={() => {
+                                        clearSelection()
+                                        setActiveSkillId('equip_zhangba_spear')
+                                    }}
                                     title="选2张手牌+1个目标，弃牌当杀使用"
                                 >
                                     丈八蛇矛
@@ -858,7 +916,11 @@ export default function GamePage() {
                             <div className="harvest-pool">
                                 {(gameState.harvestPool ?? []).map(card => (
                                     <PlayingCard key={card.id} card={card} selected={false}
-                                        onClick={() => handleRespond(card.id)} />
+                                        onClick={() => handleRespond(card.id)}
+                                        onTooltipEnter={(e) => { const c = cardTooltipContent(card.name); if (c) tooltipEnter(e, c) }}
+                                        onTooltipMove={tooltipMove}
+                                        onTooltipLeave={tooltipLeave}
+                                    />
                                 ))}
                             </div>
                         </>
@@ -1041,13 +1103,13 @@ export default function GamePage() {
                         const total = guanxingTop.length + guanxingBottom.length
                         const allPlaced = total === allCards.length && allCards.length > 0
                         return (
-                            <div className="guanxing-panel" style={{ background: 'rgba(0,0,0,0.85)', padding: '12px', borderRadius: '8px', marginBottom: '8px' }}>
-                                <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
-                                    <div style={{ flex: 1 }}>
+                            <div className="guanxing-panel" style={{ background: 'rgba(0,0,0,0.85)', padding: '12px 16px', borderRadius: '8px', marginBottom: '8px', minWidth: '520px' }}>
+                                <div style={{ display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
+                                    <div style={{ minWidth: '200px', flex: 1 }}>
                                         <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#ffd700' }}>牌堆顶（先摸到）</div>
                                         {guanxingTop.map((id, idx) => (
                                             <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                                                <span style={{ fontSize: '13px', color: '#eee' }}>{idx + 1}. {renderCard(id)}</span>
+                                                <span style={{ fontSize: '13px', color: '#eee', whiteSpace: 'nowrap' }}>{idx + 1}. {renderCard(id)}</span>
                                                 <button className="btn" style={{ fontSize: '11px', padding: '1px 4px' }} onClick={() => moveUp(guanxingTop, setGuanxingTop, idx)}>↑</button>
                                                 <button className="btn" style={{ fontSize: '11px', padding: '1px 4px' }} onClick={() => moveDown(guanxingTop, setGuanxingTop, idx)}>↓</button>
                                                 <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '1px 6px' }} onClick={() => moveToBottom(id)}>→底</button>
@@ -1055,11 +1117,11 @@ export default function GamePage() {
                                         ))}
                                         {guanxingTop.length === 0 && <div style={{ color: '#888', fontSize: '12px' }}>（空）</div>}
                                     </div>
-                                    <div style={{ flex: 1 }}>
+                                    <div style={{ minWidth: '200px', flex: 1 }}>
                                         <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#aaa' }}>牌堆底</div>
                                         {guanxingBottom.map((id, idx) => (
                                             <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                                                <span style={{ fontSize: '13px', color: '#ccc' }}>{idx + 1}. {renderCard(id)}</span>
+                                                <span style={{ fontSize: '13px', color: '#ccc', whiteSpace: 'nowrap' }}>{idx + 1}. {renderCard(id)}</span>
                                                 <button className="btn" style={{ fontSize: '11px', padding: '1px 4px' }} onClick={() => moveUp(guanxingBottom, setGuanxingBottom, idx)}>↑</button>
                                                 <button className="btn" style={{ fontSize: '11px', padding: '1px 4px' }} onClick={() => moveDown(guanxingBottom, setGuanxingBottom, idx)}>↓</button>
                                                 <button className="btn btn-secondary" style={{ fontSize: '11px', padding: '1px 6px' }} onClick={() => moveToTop(id)}>→顶</button>
@@ -1277,5 +1339,7 @@ export default function GamePage() {
             </div>
           </div>
         </div>
+        <TooltipBubble tooltip={tooltip} />
+        </>
     )
 }

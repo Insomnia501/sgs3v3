@@ -21,7 +21,7 @@ import {
 import { addLog, getActiveGeneral, checkGameOver, getAttackRange } from './game-state'
 import { drawCards } from '../rooms/room-manager'
 import { getGeneralById } from './generals'
-import { continueJudgePhase, continueTurnFromJudge, continueFromPrepPhase, findJudgeIntervenor, finishTurn } from './turn-manager'
+import { continueJudgePhase, continueTurnFromJudge, continueFromPrepPhase, findJudgeIntervenor, finishTurn, continueDelayedTrickJudge } from './turn-manager'
 
 
 // ─────────────────────────────────────────────────────────────
@@ -29,7 +29,7 @@ import { continueJudgePhase, continueTurnFromJudge, continueFromPrepPhase, findJ
 // ─────────────────────────────────────────────────────────────
 
 /** 检查所有武将中是否有人持有无懈可击 */
-function anyoneHasNegate(state: GameState): boolean {
+export function anyoneHasNegate(state: GameState): boolean {
     return state.generals.some(g => g.alive && g.hand.some(c => c.name === TrickCardName.NEGATE))
 }
 
@@ -184,6 +184,13 @@ export function handleNegateRespond(
         state.discard.push(card)
         checkMingzhe(state, general, card)
 
+        // 集智（黄月英）：使用非延时锦囊后摸1张牌
+        if (hasSkill(general, 'huangyueying_jizhi')) {
+            const extra = drawCards(state, 1)
+            general.hand.push(...extra)
+            addLog(state, `【${getGeneralName(general)}】发动【集智】摸 1 张牌`)
+        }
+
         nw.isCurrentlyNegated = !nw.isCurrentlyNegated
         const trickName = cardDisplayName({ name: nw.trickCardName } as any)
         if (nw.isCurrentlyNegated) {
@@ -234,6 +241,12 @@ function resolveNegateWindow(state: GameState): void {
     if (!nw) return
 
     state.negateWindow = undefined
+
+    // ── 延时锦囊判定前的无懈 ──
+    if (nw.delayedTrickJudgeContext) {
+        continueDelayedTrickJudge(state, nw.delayedTrickJudgeContext, nw.isCurrentlyNegated)
+        return
+    }
 
     if (nw.isCurrentlyNegated) {
         // 锦囊被无懈
@@ -693,18 +706,20 @@ export function dealDamage(
             }
         }
 
-        // 遗计（郭嘉）：受伤后可选择观看牌堆顶2张分配
+        // 遗计（郭嘉）：每受1点伤害可发动一次
         if (hasSkill(target, 'guojia_yiji') && state.deck.length > 0) {
-            state.pendingResponseQueue.unshift({
-                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                targetGeneralIndex: state.generals.indexOf(target),
-                context: {
-                    skillId: 'guojia_yiji',
-                    skillName: '遗计',
-                    description: '观看牌堆顶2张牌并分配',
-                },
-            })
-            addLog(state, `【${tgtName}】可发动【遗计】`)
+            for (let yi = 0; yi < amount; yi++) {
+                state.pendingResponseQueue.unshift({
+                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                    targetGeneralIndex: state.generals.indexOf(target),
+                    context: {
+                        skillId: 'guojia_yiji',
+                        skillName: '遗计',
+                        description: `观看牌堆顶2张牌并分配（第${yi + 1}/${amount}次）`,
+                    },
+                })
+            }
+            addLog(state, `【${tgtName}】可发动【遗计】（${amount}次）`)
         }
 
         // 刚烈（夏侯惇）：受伤后可选择发动判定
@@ -725,7 +740,7 @@ export function dealDamage(
 
     if (target.hp <= 0) {
         // 进入濒死状态 —— 逆时针询问桃
-        enterDyingState(state, attacker, target, damageCardId)
+        enterDyingState(state, attacker, target, damageCardId, amount)
     }
 }
 
@@ -738,7 +753,8 @@ function enterDyingState(
     state: GameState,
     attacker: GeneralInstance | null,
     target: GeneralInstance,
-    damageCardId?: string
+    damageCardId?: string,
+    damageAmount: number = 1
 ): void {
     const tgtName = getGeneralName(target)
     addLog(state, `【${tgtName}】进入濒死状态！`)
@@ -780,6 +796,7 @@ function enterDyingState(
             remainingAskers,
             neededHp: 1 - target.hp, // 需要恢复的体力数
             damageCardId, // 传递伤害卡牌 ID 用于被救后触发被动技能
+            damageAmount, // 传递伤害量用于遗计等技能
         },
     })
 
@@ -794,7 +811,8 @@ function triggerDamagePassiveSkills(
     state: GameState,
     attacker: GeneralInstance | null,
     target: GeneralInstance,
-    damageCardId?: string
+    damageCardId?: string,
+    damageAmount: number = 1
 ): void {
     if (!target.alive || target.hp <= 0) return
     const tgtName = getGeneralName(target)
@@ -814,18 +832,20 @@ function triggerDamagePassiveSkills(
         addLog(state, `【${tgtName}】可发动【刚烈】`)
     }
 
-    // 遗计
+    // 遗计：每受1点伤害可发动一次
     if (hasSkill(target, 'guojia_yiji') && state.deck.length > 0) {
-        state.pendingResponseQueue.unshift({
-            type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-            targetGeneralIndex: state.generals.indexOf(target),
-            context: {
-                skillId: 'guojia_yiji',
-                skillName: '遗计',
-                description: '观看牌堆顶2张牌并分配',
-            },
-        })
-        addLog(state, `【${tgtName}】可发动【遗计】`)
+        for (let yi = 0; yi < damageAmount; yi++) {
+            state.pendingResponseQueue.unshift({
+                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                targetGeneralIndex: state.generals.indexOf(target),
+                context: {
+                    skillId: 'guojia_yiji',
+                    skillName: '遗计',
+                    description: `观看牌堆顶2张牌并分配（第${yi + 1}/${damageAmount}次）`,
+                },
+            })
+        }
+        addLog(state, `【${tgtName}】可发动【遗计】（${damageAmount}次）`)
     }
 
     // 反馈
@@ -1677,9 +1697,9 @@ export function handleUseSkill(
             if (cardIds.length !== 1) return { error: '请选择1张红色牌' }
             if (targets.length < 1) return { error: '请选择一个目标' }
 
-            const cardIdx = general.hand.findIndex(c => c.id === cardIds[0])
-            if (cardIdx === -1) return { error: '手牌中找不到该牌' }
-            const card = general.hand[cardIdx]
+            // 支持手牌和装备红色牌
+            const card = findCardInHandOrEquip(general, cardIds[0])
+            if (!card) return { error: '找不到该牌' }
             if (card.suit !== CardSuit.HEART && card.suit !== CardSuit.DIAMOND) return { error: '须为红色牌' }
 
             // 杀次数限制
@@ -1700,8 +1720,7 @@ export function handleUseSkill(
             const rangeInfo = getAttackRange(general, target, state.generals)
             if (!rangeInfo.inRange) return { error: `目标距离太远（距离${rangeInfo.distance}，攻击范围${rangeInfo.range}）` }
 
-            general.hand.splice(cardIdx, 1)
-            state.discard.push(card)
+            removeCardFromHandOrEquip(state, general, cardIds[0])
             state.attackUsedThisTurn++
 
             addLog(state, `【${name}】发动【武圣】，将${suitSymbol(card.suit)}${valueName(card.value)}当杀对【${getGeneralName(target)}】使用`)
@@ -3283,6 +3302,7 @@ export function handleRespond(
                 remainingAskers: number[]
                 neededHp: number
                 damageCardId?: string
+                damageAmount?: number
             }
             const dyingGeneral = state.generals[ctx.dyingGeneralIndex]
             const attacker = ctx.attackerGeneralIndex >= 0 ? state.generals[ctx.attackerGeneralIndex] : null
@@ -3309,7 +3329,7 @@ export function handleRespond(
                 if (dyingGeneral.hp > 0) {
                     state.pendingResponseQueue.shift()
                     // 被救活后触发受伤被动技能
-                    triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId)
+                    triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId, ctx.damageAmount ?? 1)
                 } else {
                     // 还需要更多桃
                     ctx.neededHp = 1 - dyingGeneral.hp
@@ -3337,7 +3357,7 @@ export function handleRespond(
                 loseHp(state, targetGeneral, 1)
                 state.pendingResponseQueue.shift()
                 // 被救活后触发受伤被动技能
-                triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId)
+                triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId, ctx.damageAmount ?? 1)
                 return
             }
 
@@ -3355,7 +3375,7 @@ export function handleRespond(
                 if (dyingGeneral.hp > 0) {
                     state.pendingResponseQueue.shift()
                     // 被救活后触发受伤被动技能
-                    triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId)
+                    triggerDamagePassiveSkills(state, attacker, dyingGeneral, ctx.damageCardId, ctx.damageAmount ?? 1)
                 }
                 return
             }
@@ -3836,7 +3856,7 @@ const CARD_DISPLAY: Record<string, string> = {
     plus_horse: '+1马', minus_horse: '-1马',
 }
 
-function cardDisplayName(card: Card): string {
+export function cardDisplayName(card: Card): string {
     return CARD_DISPLAY[card.name] ?? card.name
 }
 

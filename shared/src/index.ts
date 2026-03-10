@@ -332,6 +332,15 @@ export interface NegateWindow {
     passedPlayerIds: string[]
     startedAt: number
     anyoneHasNegate: boolean
+    /** 延时锦囊判定上下文：无懈结算后继续/跳过判定 */
+    delayedTrickJudgeContext?: {
+        judgingGeneralIndex: number
+        delayedTrickCardId: string
+        toJudgeCardIds: string[]
+        currentJudgeIndex: number
+        skipAction: boolean
+        skipDraw: boolean
+    }
 }
 
 /** 无懈可击窗口（客户端脱敏版） */

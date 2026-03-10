@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '../store/gameStore'
 import { emit } from '../socket/client'
 import { GENERAL_IMAGE } from '../data/generalImages'
+import { useTooltip, generalTooltipContent, TooltipBubble } from '../components/Tooltip'
 import {
     GamePhase,
     Faction,
@@ -18,6 +19,7 @@ export default function GeneralPickPage() {
         flankA?: string
         flankB?: string
     }>({})
+    const { tooltip, onEnter, onMove, onLeave } = useTooltip(1500)
 
     useEffect(() => {
         if (gameState?.phase === GamePhase.PLAYING) navigate('/game')
@@ -61,6 +63,9 @@ export default function GeneralPickPage() {
                                     onClick={() => {
                                         if (isMyTurn && !isPicked) emit.pickGeneral({ generalId: g.id })
                                     }}
+                                    onMouseEnter={(e) => onEnter(e, generalTooltipContent(g))}
+                                    onMouseMove={onMove}
+                                    onMouseLeave={onLeave}
                                 >
                                     <div className="gpc-card-portrait">
                                         {GENERAL_IMAGE[g.id]
@@ -98,6 +103,7 @@ export default function GeneralPickPage() {
                         </div>
                     </div>
                 </div>
+                <TooltipBubble tooltip={tooltip} />
             </div>
         )
     }
@@ -165,7 +171,11 @@ export default function GeneralPickPage() {
 
                     <div className="deploy-pool">
                         {myPicked.map((g) => (
-                            <div key={g.id} className="deploy-general-card">
+                            <div key={g.id} className="deploy-general-card"
+                                onMouseEnter={(e) => onEnter(e, generalTooltipContent(g))}
+                                onMouseMove={onMove}
+                                onMouseLeave={onLeave}
+                            >
                                 <div className="gpc-avatar small">
                                     {GENERAL_IMAGE[g.id]
                                         ? <img src={GENERAL_IMAGE[g.id]} alt={g.name} className="gpc-portrait-img" />
@@ -199,6 +209,7 @@ export default function GeneralPickPage() {
                         }
                     </div>
                 </div>
+                <TooltipBubble tooltip={tooltip} />
             </div>
         )
     }

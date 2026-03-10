@@ -14,6 +14,7 @@ import {
 import { drawCards } from '../rooms/room-manager'
 import { addLog, getActiveGeneral, resetActedFlags } from './game-state'
 import { getGeneralById } from './generals'
+import { anyoneHasNegate, cardDisplayName } from './game-actions'
 
 // ─────────────────────────────────────────────────────────────
 // 大回合管理
@@ -509,23 +510,37 @@ export function runTurnStart(state: GameState): void {
     state.turnPhase = TurnPhase.JUDGE
     const { skipAction, skipDraw } = runJudgePhase(state, general)
 
-    // 如果判定被鬼才/缓释中断，等待玩家响应后由 continueJudgePhase 继续
-    if (state.pendingResponseQueue.length > 0 && state.pendingResponseQueue[0].type === ResponseType.JUDGE_INTERVENE) {
+    // 如果判定被鬼才/缓释中断 或 延时锦囊正在询问无懈可击，等待结算
+    if ((state.pendingResponseQueue.length > 0 && state.pendingResponseQueue[0].type === ResponseType.JUDGE_INTERVENE)
+        || state.negateWindow) {
         return
     }
+
+    // ── 判定完毕，进入后续阶段
+    finishJudgePhaseAndContinue(state, general, skipAction, skipDraw)
+}
+
+/**
+ * 判定阶段全部完成后，继续推进摸牌→出牌→弃牌。
+ * 被 startTurn、continueJudgePhase、continueDelayedTrickJudge 调用。
+ */
+export function finishJudgePhaseAndContinue(
+    state: GameState,
+    general: GeneralInstance,
+    skipAction: boolean,
+    skipDraw: boolean,
+): void {
+    const name = getGeneralName(general)
 
     // ── 摸牌阶段
     if (!skipDraw) {
         state.turnPhase = TurnPhase.DRAW
 
-        // 突袭（张辽）：可改为获取至多2名角色的各一张手牌
-        // 突袭（张辽）：可选择发动，获取至多2名有手牌角色的各一张手牌（代替摸牌）
         if (hasSkillById(general, 'zhangliao_tuxi')) {
             const oppWithCards = state.generals.filter(
                 g => g.alive && g.faction !== general.faction && g.hand.length > 0
             )
             if (oppWithCards.length > 0) {
-                // 先让玩家选择是否发动突袭
                 state.pendingResponseQueue.push({
                     type: ResponseType.SKILL_ACTIVATE_CONFIRM,
                     targetGeneralIndex: state.generals.indexOf(general),
@@ -536,21 +551,18 @@ export function runTurnStart(state: GameState): void {
                         skipAction,
                     },
                 })
-                return // 等待玩家响应，后续由 handleRespond 继续
+                return
             } else {
-                // 无人可偷，正常摸牌
                 const drawn = drawCards(state, 2)
                 general.hand.push(...drawn)
                 addLog(state, `【${name}】摸了 ${drawn.length} 张牌`)
             }
         } else {
             let drawCount = 2
-            // 英姿（周瑜锁定技）：多摸 1 张
             if (hasYingziSkill(general)) {
                 drawCount = 3
             }
 
-            // 弘援（诸葛瑾）：准备阶段选择了弘援，自己只摸1张，友方各摸1张
             if ((general as any).hongyuanActivated) {
                 delete (general as any).hongyuanActivated
                 const drawn = drawCards(state, 1)
@@ -576,7 +588,6 @@ export function runTurnStart(state: GameState): void {
     if (!skipAction) {
         state.turnPhase = TurnPhase.ACTION
 
-        // 神速二：出牌阶段开始时询问是否跳过出牌弃装备视为杀
         if (hasSkillById(general, 'xiahoyuan_shensu')) {
             const hasEquip = general.equip.weapon || general.equip.armor || general.equip.plus_horse || general.equip.minus_horse
             const hasHandEquip = general.hand.some(c => c.category === CardCategory.EQUIPMENT)
@@ -599,7 +610,6 @@ export function runTurnStart(state: GameState): void {
         }
     }
 }
-
 /**
  * 从判定阶段开始继续执行回合（用于神速等跳阶段技能）
  * @param skipJudge 是否跳过判定阶段
@@ -614,7 +624,6 @@ export function continueTurnFromJudge(
 ): void {
     const general = getActiveGeneral(state)
     if (!general) return
-    const name = getGeneralName(general)
 
     let skipAction = extraSkipAction
     let skipDraw = extraSkipDraw
@@ -624,7 +633,8 @@ export function continueTurnFromJudge(
         state.turnPhase = TurnPhase.JUDGE
         const judgeResult = runJudgePhase(state, general)
 
-        if (state.pendingResponseQueue.length > 0 && state.pendingResponseQueue[0].type === ResponseType.JUDGE_INTERVENE) {
+        if ((state.pendingResponseQueue.length > 0 && state.pendingResponseQueue[0].type === ResponseType.JUDGE_INTERVENE)
+            || state.negateWindow) {
             return
         }
 
@@ -632,42 +642,7 @@ export function continueTurnFromJudge(
         if (judgeResult.skipDraw) skipDraw = true
     }
 
-    // ── 摸牌阶段
-    if (!skipDraw) {
-        state.turnPhase = TurnPhase.DRAW
-        let drawCount = 2
-        if (hasYingziSkill(general)) drawCount = 3
-        const drawn = drawCards(state, drawCount)
-        general.hand.push(...drawn)
-        addLog(state, `【${name}】摸了 ${drawn.length} 张牌${drawCount > 2 ? '（英姿+1）' : ''}`)
-    }
-
-    // ── 出牌阶段
-    if (!skipAction) {
-        state.turnPhase = TurnPhase.ACTION
-
-        // 神速二：出牌阶段开始时询问
-        if (hasSkillById(general, 'xiahoyuan_shensu')) {
-            const hasEquip = general.equip.weapon || general.equip.armor || general.equip.plus_horse || general.equip.minus_horse
-            const hasHandEquip = general.hand.some(c => c.category === CardCategory.EQUIPMENT)
-            if (hasEquip || hasHandEquip) {
-                state.pendingResponseQueue.push({
-                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                    targetGeneralIndex: state.generals.indexOf(general),
-                    context: {
-                        skillId: 'xiahoyuan_shensu_2',
-                        skillName: '神速二',
-                        description: '跳过出牌阶段并弃一张装备牌，视为对一名角色使用一张杀',
-                    },
-                })
-            }
-        }
-    } else {
-        state.turnPhase = TurnPhase.DISCARD
-        if (general.hand.length <= general.hp) {
-            finishTurn(state)
-        }
-    }
+    finishJudgePhaseAndContinue(state, general, skipAction, skipDraw)
 }
 
 /**
@@ -728,40 +703,113 @@ function processNextJudge(
     if (state.deck.length === 0) return { skipAction, skipDraw }
 
     const card = toJudge[judgeIndex]
-    const judgeCard = state.deck.shift()!
-    state.discard.push(judgeCard)
-
     const name = getGeneralName(general)
-    addLog(state, `【${name}】的【${card.name}】判定：${suitName(judgeCard.suit)}${valueName(judgeCard.value)}`)
+    const gIdx = state.generals.indexOf(general)
 
-    // 检查是否有鬼才/缓释可介入
-    const intervenor = findJudgeIntervenor(state, general)
-    if (intervenor) {
-        // 中断判定流程 → 让介入者选择是否替换
-        state.pendingResponseQueue.unshift({
-            type: ResponseType.JUDGE_INTERVENE,
-            targetGeneralIndex: state.generals.indexOf(intervenor),
-            context: {
-                judgingGeneralIndex: state.generals.indexOf(general),
-                judgeCardId: judgeCard.id,
-                delayedTrickCardId: card.id,
-                delayedTrickName: card.name,
-                // 存储继续判定所需的上下文
-                toJudgeCardIds: toJudge.map(c => c.id),
-                currentJudgeIndex: judgeIndex,
-                skipAction,
-                skipDraw,
-            },
-        })
-        addLog(state, `【${getGeneralName(intervenor)}】可发动【${hasSkillById(intervenor, 'simayi_guicai') ? '鬼才' : '缓释'}】修改判定`)
-        return { skipAction, skipDraw } // 暂时返回，后续由 continueJudgePhase 继续
+    // ── 延时锦囊判定前，询问无懈可击 ──
+    const hasNegate = anyoneHasNegate(state)
+    state.negateWindow = {
+        trickCardName: card.name,
+        trickUserIndex: -1, // 延时锦囊没有"使用者"
+        trickTargetIndex: gIdx,
+        trickTargetName: name,
+        isCurrentlyNegated: false,
+        hasFollowUpResponse: false,
+        passedPlayerIds: [],
+        startedAt: Date.now(),
+        anyoneHasNegate: hasNegate,
+        delayedTrickJudgeContext: {
+            judgingGeneralIndex: gIdx,
+            delayedTrickCardId: card.id,
+            toJudgeCardIds: toJudge.map(c => c.id),
+            currentJudgeIndex: judgeIndex,
+            skipAction,
+            skipDraw,
+        },
+    }
+    addLog(state, `【${name}】的【${cardDisplayName(card)}】即将判定，询问无懈可击...`)
+    return { skipAction, skipDraw } // 暂时返回，由 resolveNegateWindow 继续
+}
+
+/**
+ * 延时锦囊无懈结算后，继续判定流程。
+ * negated=true → 锦囊被无懈，跳过判定，移除该锦囊
+ * negated=false → 锦囊未被无懈，正常翻牌判定
+ */
+export function continueDelayedTrickJudge(
+    state: GameState,
+    ctx: NonNullable<import('sgs3v3-shared').NegateWindow['delayedTrickJudgeContext']>,
+    negated: boolean,
+): void {
+    const general = state.generals[ctx.judgingGeneralIndex]
+    if (!general) return
+
+    const toJudge = ctx.toJudgeCardIds
+        .map(id => general.judgeZone.find(c => c.id === id))
+        .filter((c): c is Card => c != null)
+
+    const card = toJudge[ctx.currentJudgeIndex]
+    if (!card) return
+
+    let { skipAction, skipDraw } = ctx
+
+    if (negated) {
+        // 锦囊被无懈 → 移除该延时锦囊，不执行判定
+        addLog(state, `【${cardDisplayName(card)}】对【${getGeneralName(general)}】的效果被无懈可击抵消`)
+        general.judgeZone = general.judgeZone.filter(c => c.id !== card.id)
+        state.discard.push(card)
+    } else {
+        // 锦囊未被无懈 → 正常翻牌判定
+        if (state.deck.length === 0) {
+            finishJudgePhaseAndContinue(state, general, skipAction, skipDraw)
+            return
+        }
+
+        const judgeCard = state.deck.shift()!
+        state.discard.push(judgeCard)
+        const name = getGeneralName(general)
+        addLog(state, `【${name}】的【${cardDisplayName(card)}】判定：${suitName(judgeCard.suit)}${valueName(judgeCard.value)}`)
+
+        // 检查是否有鬼才/缓释可介入
+        const intervenor = findJudgeIntervenor(state, general)
+        if (intervenor) {
+            state.pendingResponseQueue.unshift({
+                type: ResponseType.JUDGE_INTERVENE,
+                targetGeneralIndex: state.generals.indexOf(intervenor),
+                context: {
+                    judgingGeneralIndex: ctx.judgingGeneralIndex,
+                    judgeCardId: judgeCard.id,
+                    delayedTrickCardId: card.id,
+                    delayedTrickName: card.name,
+                    toJudgeCardIds: ctx.toJudgeCardIds,
+                    currentJudgeIndex: ctx.currentJudgeIndex,
+                    skipAction,
+                    skipDraw,
+                },
+            })
+            addLog(state, `【${getGeneralName(intervenor)}】可发动【${hasSkillById(intervenor, 'simayi_guicai') ? '鬼才' : '缓释'}】修改判定`)
+            return // 等待介入结果
+        }
+
+        // 无人介入 → 直接结算
+        const result = resolveJudge(state, general, card, judgeCard, skipAction, skipDraw)
+        skipAction = result.skipAction
+        skipDraw = result.skipDraw
     }
 
-    // 无人介入 → 直接结算判定结果
-    const result = resolveJudge(state, general, card, judgeCard, skipAction, skipDraw)
+    // 继续下一张延时锦囊
+    const nextIndex = ctx.currentJudgeIndex + 1
+    const remainingToJudge = ctx.toJudgeCardIds
+        .map(id => general.judgeZone.find(c => c.id === id))
+        .filter((c): c is Card => c != null)
 
-    // 继续处理下一张延时锦囊
-    return processNextJudge(state, general, toJudge, judgeIndex + 1, result.skipAction, result.skipDraw)
+    if (nextIndex < remainingToJudge.length) {
+        // 还有下一张延时锦囊，递归调用 processNextJudge 开新的无懈窗口
+        processNextJudge(state, general, remainingToJudge, nextIndex, skipAction, skipDraw)
+    } else {
+        // 所有延时锦囊处理完毕，进入后续阶段
+        finishJudgePhaseAndContinue(state, general, skipAction, skipDraw)
+    }
 }
 
 /** 结算一张延时锦囊的判定效果 */
@@ -854,11 +902,10 @@ export function continueJudgePhase(
         result.skipAction, result.skipDraw
     )
 
-    // 如果没有被新的介入打断，继续回合流程
-    if (state.pendingResponseQueue.length === 0 || state.pendingResponseQueue[0].type !== ResponseType.JUDGE_INTERVENE) {
-        // 重用 continueTurnFromJudge 的摸牌/出牌逻辑（包含弘援、突袭等技能检查）
-        // skipJudge=true（判定已结算完），传入 skipDraw 和 skipAction
-        continueTurnFromJudge(state, true, finalResult.skipDraw, finalResult.skipAction)
+    // 如果没有被新的介入或无懈窗口打断，继续回合流程
+    if ((state.pendingResponseQueue.length === 0 || state.pendingResponseQueue[0].type !== ResponseType.JUDGE_INTERVENE)
+        && !state.negateWindow) {
+        finishJudgePhaseAndContinue(state, judgingGeneral, finalResult.skipDraw, finalResult.skipAction)
     }
 }
 

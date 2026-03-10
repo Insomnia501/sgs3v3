@@ -197,3 +197,49 @@ html, body, #root {
 /* ── 牌面颜色 ── */
 .suit-red  { color: var(--color-red); }
 .suit-black { color: var(--color-black); }
+
+/* ── 悬停气泡 ── */
+.hover-tooltip {
+    max-width: 300px;
+    min-width: 180px;
+    background: rgba(30, 24, 16, 0.95);
+    border: 1px solid var(--color-gold);
+    border-radius: var(--radius-md);
+    padding: 10px 14px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7), 0 0 8px rgba(212, 160, 48, 0.2);
+    backdrop-filter: blur(12px);
+    pointer-events: none;
+    animation: tooltipFadeIn 0.2s ease;
+    font-family: var(--font-ui);
+}
+
+@keyframes tooltipFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.hover-tooltip-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--color-gold-light);
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(212, 160, 48, 0.3);
+}
+
+.hover-tooltip-skill {
+    font-size: 12px;
+    color: var(--color-text);
+    line-height: 1.6;
+    margin-top: 4px;
+}
+
+.hover-tooltip-skill-name {
+    color: #b898e0;
+    font-weight: 600;
+    margin-right: 2px;
+}
+
+.hover-tooltip-skill-desc {
+    color: #d0c8a0;
+}
