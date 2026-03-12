@@ -116,15 +116,26 @@ export function joinRoom(
     if (existingPlayers.length >= 2) return { error: '房间已满' }
 
     const playerId = uuidv4()
+    const creatorId = existingPlayers[0]
+
+    // 随机决定阵营
+    const creatorIsWarm = Math.random() < 0.5
+    const creatorFaction = creatorIsWarm ? Faction.WARM : Faction.COOL
+    const joinerFaction = creatorIsWarm ? Faction.COOL : Faction.WARM
+
+    // 更新创建者的阵营
+    room.gameState.players[creatorId].faction = creatorFaction
+
     const player: Player = {
         id: playerId,
         nickname,
-        faction: Faction.COOL,
+        faction: joinerFaction,
         connected: true,
     }
 
     room.gameState.players[playerId] = player
-    room.gameState.coolPlayerId = playerId
+    room.gameState.warmPlayerId = creatorIsWarm ? creatorId : playerId
+    room.gameState.coolPlayerId = creatorIsWarm ? playerId : creatorId
     socketToRoom.set(socketId, roomCode)
     socketToPlayer.set(socketId, playerId)
 
