@@ -14,7 +14,7 @@ import {
 import { drawCards } from '../rooms/room-manager'
 import { addLog, getActiveGeneral, resetActedFlags } from './game-state'
 import { getGeneralById } from './generals'
-import { anyoneHasNegate, cardDisplayName } from './game-actions'
+import { anyoneHasNegate, cardDisplayName, cardFullName } from './game-actions'
 
 // ─────────────────────────────────────────────────────────────
 // 大回合管理
@@ -365,7 +365,7 @@ export function runTurnStart(state: GameState): void {
     if (hasSkillById(general, 'zhenji_luoshen') && state.deck.length > 0) {
         const judgeCard = state.deck.shift()!
         state.discard.push(judgeCard)
-        addLog(state, `【${name}】的【洛神】判定：${suitName(judgeCard.suit)}${valueName(judgeCard.value)}`)
+        addLog(state, `【${name}】的【洛神】判定：${cardFullName(judgeCard)}`)
 
         // 检查鬼才/缓释介入
         const intervenor = findJudgeIntervenor(state, general)
@@ -768,7 +768,7 @@ export function continueDelayedTrickJudge(
         const judgeCard = state.deck.shift()!
         state.discard.push(judgeCard)
         const name = getGeneralName(general)
-        addLog(state, `【${name}】的【${cardDisplayName(card)}】判定：${suitName(judgeCard.suit)}${valueName(judgeCard.value)}`)
+        addLog(state, `【${name}】的【${cardDisplayName(card)}】判定：${cardFullName(judgeCard)}`)
 
         // 检查是否有鬼才/缓释可介入
         const intervenor = findJudgeIntervenor(state, general)

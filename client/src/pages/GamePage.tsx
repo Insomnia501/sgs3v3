@@ -385,12 +385,16 @@ export default function GamePage() {
             <div className="generals-row opp-row">
                 {oppGenerals.map((g) => {
                     const idx = generals.indexOf(g)
+                    const isYiji = myPendingResponse && pendingResponse?.type === ResponseType.SKILL_YIJI_DISTRIBUTE
                     return (
                         <GeneralPanel
                             key={g.generalId} general={g} index={idx}
                             isActive={idx === activeGeneralIndex}
                             isTarget={selectedTargets.includes(idx)}
-                            onSelect={toggleTargetSelection}
+                            onSelect={isYiji
+                                ? (i) => useGameStore.setState({ selectedTargets: [i] })
+                                : toggleTargetSelection
+                            }
                             onTooltipEnter={(e) => { const c = generalTooltipById(g.generalId); if (c) tooltipEnter(e, c) }}
                             onTooltipMove={tooltipMove}
                             onTooltipLeave={tooltipLeave}
@@ -613,7 +617,11 @@ export default function GamePage() {
                             isActive={idx === activeGeneralIndex}
                             isTarget={selectedTargets.includes(idx)}
                             onSelect={(needTargetPick)
-                                ? toggleTargetSelection
+                                ? (i) => {
+                                    // 遗计：不能选自己（有"保留"按钮），且单选模式
+                                    if (i === pendingResponse!.targetGeneralIndex) return
+                                    useGameStore.setState({ selectedTargets: [i] })
+                                }
                                 : (i) => {
                                     if (needMyTarget) {
                                         // 已选牌或激活技能时，点击己方武将 = 选为目标
@@ -726,7 +734,7 @@ export default function GamePage() {
                         const isNonToggleSkillActive = activeSkillId && !isToggleSkillActive
                         return (
                         <>
-                            <button className="btn btn-primary" disabled={selectedCardIds.length === 0} onClick={handleUseCard}>出牌</button>
+                            <button className="btn btn-primary" disabled={selectedCardIds.length === 0 || !!isNonToggleSkillActive} onClick={handleUseCard}>出牌</button>
                             {/* AOE方向选择：显示相邻武将名表示方向 */}
                             {isAoeCard && aoeDirectionLabels && (
                                 <>
@@ -1251,7 +1259,7 @@ export default function GamePage() {
                                     return (
                                         <button key={gIdx} className="btn btn-skill" style={{ margin: '2px', fontSize: '12px' }}
                                             onClick={() => emit.respond({ targetIndex: gIdx } as any)}>
-                                            {g.generalId}
+                                            {GENERAL_NAMES[g.generalId] ?? g.generalId}
                                         </button>
                                     )
                                 })}
@@ -1271,7 +1279,7 @@ export default function GamePage() {
                                     return (
                                         <button key={idx} className="btn btn-skill" style={{ margin: '2px', fontSize: '12px' }}
                                             onClick={() => emit.respond({ targetIndex: idx } as any)}>
-                                            {g.generalId}
+                                            {GENERAL_NAMES[g.generalId] ?? g.generalId}
                                         </button>
                                     )
                                 })}

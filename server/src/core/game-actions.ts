@@ -23,6 +23,28 @@ import { drawCards } from '../rooms/room-manager'
 import { getGeneralById } from './generals'
 import { continueJudgePhase, continueTurnFromJudge, continueFromPrepPhase, findJudgeIntervenor, finishTurn, continueDelayedTrickJudge } from './turn-manager'
 
+/** 检查是否触发雌雄双股剑，如是则 unshift 确认到 pendingResponseQueue */
+function maybeDoubleSwords(state: GameState, attackerIdx: number, targetIdx: number): void {
+    const attacker = state.generals[attackerIdx]
+    const target = state.generals[targetIdx]
+    if (!attacker || !target) return
+    if (attacker.equip.weapon?.name !== EquipmentCardName.DOUBLE_SWORDS) return
+    const attackerDef = getGeneralById(attacker.generalId)
+    const targetDef = getGeneralById(target.generalId)
+    if (attackerDef && targetDef && attackerDef.gender !== targetDef.gender) {
+        state.pendingResponseQueue.unshift({
+            type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+            targetGeneralIndex: attackerIdx,
+            context: {
+                skillId: 'equip_double_swords',
+                skillName: '雌雄双股剑',
+                description: `对异性【${getGeneralName(target)}】出杀，令其弃1牌或你摸1牌`,
+                targetIndex: targetIdx,
+            },
+        })
+    }
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // 无懈可击核心逻辑
@@ -1148,21 +1170,7 @@ function handleBasicCard(
             }
 
             // 雌雄双股剑：杀异性目标时可触发
-            if (general.equip.weapon?.name === EquipmentCardName.DOUBLE_SWORDS) {
-                const targetDef = getGeneralById(target.generalId)
-                if (attackerDef && targetDef && attackerDef.gender !== targetDef.gender) {
-                    state.pendingResponseQueue.unshift({
-                        type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                        targetGeneralIndex: attackerIdx,
-                        context: {
-                            skillId: 'equip_double_swords',
-                            skillName: '雌雄双股剑',
-                            description: `对异性【${getGeneralName(target)}】出杀，令其弃1牌或你摸1牌`,
-                            targetIndex: targetIdx,
-                        },
-                    })
-                }
-            }
+            maybeDoubleSwords(state, attackerIdx, targetIdx)
         }
         return
     }
@@ -1297,21 +1305,7 @@ function handleWushengAttack(
             })
         }
 
-        if (general.equip.weapon?.name === EquipmentCardName.DOUBLE_SWORDS) {
-            const targetDef = getGeneralById(target.generalId)
-            if (attackerDef && targetDef && attackerDef.gender !== targetDef.gender) {
-                state.pendingResponseQueue.unshift({
-                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                    targetGeneralIndex: attackerIdx,
-                    context: {
-                        skillId: 'equip_double_swords',
-                        skillName: '雌雄双股剑',
-                        description: `对异性【${getGeneralName(target)}】出杀，令其弃1牌或你摸1牌`,
-                        targetIndex: targetIdx,
-                    },
-                })
-            }
-        }
+        maybeDoubleSwords(state, attackerIdx, targetIdx)
     }
     return
 }
@@ -1566,7 +1560,7 @@ function handleTrickCard(
             const gIdx = state.generals.indexOf(general)
 
             const harvestCards = drawCards(state, alive.length)
-            addLog(state, `五谷丰登翻出 ${harvestCards.length} 张牌`)
+            addLog(state, `五谷丰登翻出 ${harvestCards.length} 张牌：${harvestCards.map(c => cardFullName(c)).join('、')}`)
             state.harvestPool = harvestCards
 
             for (let i = alive.length - 1; i >= 0; i--) {
@@ -1724,7 +1718,10 @@ export function handleUseSkill(
             if (err) return err
             if (cardIds.length === 0) return { error: '请选择要弃置的牌' }
             let discardCount = 0
+            const discardedCards: Card[] = []
             for (const cid of cardIds) {
+                const card = findCardInHandOrEquip(general, cid)
+                if (card) discardedCards.push(card)
                 const result = removeCardFromHandOrEquip(state, general, cid)
                 if ('error' in result) return result
                 discardCount++
@@ -1732,7 +1729,7 @@ export function handleUseSkill(
             const drawn = drawCards(state, discardCount)
             general.hand.push(...drawn)
             markUsed('sunquan_zhiheng')
-            addLog(state, `【${name}】发动【制衡】，弃 ${cardIds.length} 张牌并摸 ${drawn.length} 张牌`)
+            addLog(state, `【${name}】发动【制衡】，弃${discardedCards.map(c => cardFullName(c)).join('、')}，摸 ${drawn.length} 张牌`)
             return
         }
 
@@ -1770,16 +1767,18 @@ export function handleUseSkill(
                 const cardIdx = general.hand.findIndex(c => c.id === cid)
                 if (cardIdx === -1) return { error: '手牌中找不到此牌' }
             }
+            const jieyinCards: Card[] = []
             for (const cid of cardIds) {
                 const cardIdx = general.hand.findIndex(c => c.id === cid)
                 const card = general.hand.splice(cardIdx, 1)[0]
+                jieyinCards.push(card)
                 state.discard.push(card)
                 checkMingzhe(state, general, card)
             }
             if (general.hp < general.maxHp) general.hp++
             if (target.hp < target.maxHp) target.hp++
             markUsed('sunshangxiang_jieyin')
-            addLog(state, `【${name}】发动【结姻】，与【${getGeneralName(target)}】各回复1点体力`)
+            addLog(state, `【${name}】发动【结姻】弃${jieyinCards.map(c => cardFullName(c)).join('、')}，与【${getGeneralName(target)}】各回复1点体力`)
             return
         }
 
@@ -2042,7 +2041,7 @@ export function handleUseSkill(
             state.discard.push(...cards)
             state.attackUsedThisTurn++
 
-            addLog(state, `【${name}】发动【丈八蛇矛】对【${getGeneralName(target)}】使用了【杀】`)
+            addLog(state, `【${name}】发动【丈八蛇矛】（弃${cards.map(c => cardFullName(c)).join('、')}）对【${getGeneralName(target)}】使用了【杀】`)
 
             const targetIdx = state.generals.indexOf(target)
             const attackerIdx = state.generals.indexOf(general)
@@ -2150,16 +2149,20 @@ export function handleRespond(
                 // 流离放弃 → 正常接杀（推 DODGE 给自己）
                 if (ctx.skillId === 'daqiao_liuli') {
                     const atkCtx = ctx as any
+                    const attackerIdx = atkCtx.attackerIndex as number
+                    const attacker = state.generals[attackerIdx]
                     state.pendingResponseQueue.unshift({
                         type: ResponseType.DODGE,
                         targetGeneralIndex: state.generals.indexOf(targetGeneral),
                         context: {
-                            attackerGeneralIndex: atkCtx.attackerIndex,
+                            attackerGeneralIndex: attackerIdx,
                             requiredDodges: atkCtx.requiredDodges || 1,
                             dodgesReceived: 0,
                             attackCard: atkCtx.attackCard,
                         },
                     })
+                    // 流离拒绝后，检查雌雄双股剑（杀异性目标）
+                    maybeDoubleSwords(state, attackerIdx, state.generals.indexOf(targetGeneral))
                 }
 
                 // 天香放弃 → 正常受伤
@@ -2375,6 +2378,8 @@ export function handleRespond(
                                 attackCard: atkCtx.attackCard,
                             },
                         })
+                        // 流离转移后，检查雌雄双股剑（对新目标）
+                        maybeDoubleSwords(state, attackerIdx, state.generals.indexOf(newTarget))
                     } else {
                         const candidateIndices = candidates.map(g => state.generals.indexOf(g))
                         state.pendingResponseQueue.unshift({
@@ -2524,7 +2529,8 @@ export function handleRespond(
                         removeCardFromHandOrEquip(state, targetGeneral, cid)
                     }
 
-                    addLog(state, `【${name}】发动【贯石斧】弃2张牌，【杀】仍然命中`)
+                    const axeDiscarded = cardIds.map(cid => state.discard.find(c => c.id === cid)).filter(Boolean) as Card[]
+                    addLog(state, `【${name}】发动【贯石斧】弃${axeDiscarded.map(c => cardFullName(c)).join('、')}，【杀】仍然命中`)
 
                     // 造成伤害
                     const killDamage = calcKillDamage(state, targetGeneral)
@@ -3164,6 +3170,8 @@ export function handleRespond(
                     attackCard: ctx.attackCard,
                 },
             })
+            // 流离转移后，检查雌雄双股剑（对新目标）
+            maybeDoubleSwords(state, ctx.attackerIndex, chosenIdx)
             return
         }
 
@@ -3433,7 +3441,7 @@ export function handleRespond(
                 const randIdx = Math.floor(Math.random() * iceTarget.hand.length)
                 const card = iceTarget.hand.splice(randIdx, 1)[0]
                 state.discard.push(card)
-                addLog(state, `【${getGeneralName(targetGeneral)}】弃了【${getGeneralName(iceTarget)}】的一张手牌`)
+                addLog(state, `【${getGeneralName(targetGeneral)}】弃了【${getGeneralName(iceTarget)}】的手牌${cardFullName(card)}`)
                 checkMingzhe(state, iceTarget, card)
             } else if (['weapon', 'armor', 'plus_horse', 'minus_horse'].includes(action)) {
                 const slot = action as keyof typeof iceTarget.equip
@@ -3475,7 +3483,7 @@ export function handleRespond(
                 picked = pool.splice(0, 1)[0]
             }
             targetGeneral.hand.push(picked)
-            addLog(state, `【${getGeneralName(targetGeneral)}】从五谷丰登中选择了【${cardDisplayName(picked)}】`)
+            addLog(state, `【${getGeneralName(targetGeneral)}】从五谷丰登中选择了${cardFullName(picked)}`)
 
             state.pendingResponseQueue.shift()
 
@@ -3607,7 +3615,7 @@ export function handleRespond(
                 }
 
                 const skillName = isHuanshi ? '缓释' : '鬼才'
-                addLog(state, `【${getGeneralName(targetGeneral)}】发动【${skillName}】，将判定牌替换为 ${suitSymbol(replacementCard.suit)}${valueName(replacementCard.value)}`)
+                addLog(state, `【${getGeneralName(targetGeneral)}】发动【${skillName}】，将判定牌替换为${cardFullName(replacementCard)}`)
 
                 // 原判定牌放到弃牌堆（替换牌成为新的判定牌，放入弃牌堆）
                 state.discard.push(replacementCard)
@@ -4075,4 +4083,9 @@ function suitSymbol(suit: CardSuit): string {
 
 function valueName(value: number): string {
     return { 1: 'A', 11: 'J', 12: 'Q', 13: 'K' }[value] ?? String(value)
+}
+
+/** 完整牌名，如 "♠A【杀】" */
+export function cardFullName(card: Card): string {
+    return `${suitSymbol(card.suit)}${valueName(card.value)}【${cardDisplayName(card)}】`
 }
