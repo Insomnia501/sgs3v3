@@ -386,12 +386,13 @@ export default function GamePage() {
                 {oppGenerals.map((g) => {
                     const idx = generals.indexOf(g)
                     const isYiji = myPendingResponse && pendingResponse?.type === ResponseType.SKILL_YIJI_DISTRIBUTE
+                    const isSingleSelectSkill = isYiji || activeSkillId === 'liubei_rende'
                     return (
                         <GeneralPanel
                             key={g.generalId} general={g} index={idx}
                             isActive={idx === activeGeneralIndex}
                             isTarget={selectedTargets.includes(idx)}
-                            onSelect={isYiji
+                            onSelect={isSingleSelectSkill
                                 ? (i) => useGameStore.setState({ selectedTargets: [i] })
                                 : toggleTargetSelection
                             }
@@ -626,7 +627,12 @@ export default function GamePage() {
                                     if (needMyTarget) {
                                         // 已选牌或激活技能时，点击己方武将 = 选为目标
                                         if (selectedCardIds.length > 0 || activeSkillId) {
-                                            toggleTargetSelection(i)
+                                            // 仁德等单选技能：替换而非追加
+                                            if (activeSkillId === 'liubei_rende') {
+                                                useGameStore.setState({ selectedTargets: [i] })
+                                            } else {
+                                                toggleTargetSelection(i)
+                                            }
                                         } else {
                                             // 未选牌时，点击己方武将 = 切换查看手牌
                                             setViewingGeneralIdx(i === activeGeneralIndex ? null : i)
