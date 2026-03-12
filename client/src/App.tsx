@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect } from 'react'
-import { connectSocket, registerSocketListeners } from './socket/client'
+import { connectSocket, registerSocketListeners, emit, saveSession, loadSession, clearSession } from './socket/client'
 import { useGameStore } from './store/gameStore'
 import { GamePhase } from 'sgs3v3-shared'
 import LobbyPage from './pages/LobbyPage'
@@ -13,15 +13,29 @@ export default function App() {
     const setWinnerFaction = useGameStore((s) => s.setWinnerFaction)
 
     useEffect(() => {
-        connectSocket()
+        const s = connectSocket()
 
         registerSocketListeners({
             onRoomCreated: (data) => {
                 setPlayerId(data.playerId)
                 useGameStore.setState({ roomCode: data.roomCode })
+                saveSession(data.playerId, data.roomCode)
             },
             onRoomJoined: (data) => {
                 setPlayerId(data.playerId)
+                // roomCode 在 joinRoom 时已知，从 store 获取
+                const rc = useGameStore.getState().roomCode
+                if (rc) saveSession(data.playerId, rc)
+            },
+            onRejoinOk: (data) => {
+                setPlayerId(data.playerId)
+                useGameStore.setState({ roomCode: data.roomCode })
+                saveSession(data.playerId, data.roomCode)
+                console.log('[Rejoin] Successfully rejoined', data.roomCode)
+            },
+            onRejoinFail: (data) => {
+                console.log('[Rejoin] Failed:', data.message)
+                clearSession()
             },
             onGameStateUpdate: (data) => {
                 setGameState(data.state)
@@ -29,10 +43,20 @@ export default function App() {
             },
             onGameOver: (data) => {
                 setWinnerFaction(data.winnerFaction)
+                clearSession()
             },
             onError: (data) => {
                 setError(data.message)
             },
+        })
+
+        // 连接成功后尝试重连
+        s.on('connect', () => {
+            const session = loadSession()
+            if (session) {
+                console.log('[Rejoin] Attempting rejoin...', session.roomCode)
+                emit.rejoinRoom({ roomCode: session.roomCode, playerId: session.playerId })
+            }
         })
     }, [])
 

@@ -533,6 +533,7 @@ export interface S2C_GameOver { winnerFaction: Faction; reason: string }
 export const SocketEvents = {
     CREATE_ROOM: 'create_room',
     JOIN_ROOM: 'join_room',
+    REJOIN_ROOM: 'rejoin_room',
     PICK_GENERAL: 'pick_general',
     DEPLOY_GENERALS: 'deploy_generals',
     CHOOSE_ACTION_UNIT: 'choose_action_unit',
@@ -545,6 +546,8 @@ export const SocketEvents = {
     NEGATE_RESPOND: 'negate_respond',
     ROOM_CREATED: 'room_created',
     ROOM_JOINED: 'room_joined',
+    REJOIN_OK: 'rejoin_ok',
+    REJOIN_FAIL: 'rejoin_fail',
     ROOM_UPDATE: 'room_update',
     GAME_STATE_UPDATE: 'game_state_update',
     GAME_OVER: 'game_over',

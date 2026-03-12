@@ -132,6 +132,38 @@ export function joinRoom(
 }
 
 // ──────────────────────────────────────────────────────────
+// 重连房间
+// ──────────────────────────────────────────────────────────
+
+export function rejoinRoom(
+    socketId: string,
+    roomCode: string,
+    playerId: string
+): { room: Room } | { error: string } {
+    const room = rooms.get(roomCode)
+    if (!room) return { error: '房间不存在或已结束' }
+
+    const player = room.gameState.players[playerId]
+    if (!player) return { error: '玩家不属于该房间' }
+
+    // 清除旧的 socket 映射（如有）
+    for (const [sid, pid] of socketToPlayer.entries()) {
+        if (pid === playerId) {
+            socketToRoom.delete(sid)
+            socketToPlayer.delete(sid)
+        }
+    }
+
+    // 绑定新 socket
+    socketToRoom.set(socketId, roomCode)
+    socketToPlayer.set(socketId, playerId)
+    player.connected = true
+
+    console.log(`[Room] Player ${playerId} (${player.nickname}) rejoined ${roomCode}`)
+    return { room }
+}
+
+// ──────────────────────────────────────────────────────────
 // 启动选将阶段
 // ──────────────────────────────────────────────────────────
 

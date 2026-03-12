@@ -39,7 +39,9 @@ export default function LobbyPage() {
     function handleJoin() {
         if (!inputCode.trim()) return setError('请输入房间码')
         const name = nickname.trim() || `玩家${Math.floor(Math.random() * 9000 + 1000)}`
-        emit.joinRoom({ roomCode: inputCode.trim().toUpperCase(), nickname: name })
+        const code = inputCode.trim().toUpperCase()
+        useGameStore.setState({ roomCode: code })
+        emit.joinRoom({ roomCode: code, nickname: name })
     }
 
     return (

@@ -17,6 +17,7 @@ import {
 import {
     createRoom,
     joinRoom,
+    rejoinRoom,
     startPickPhase,
     pickGeneral,
     deployGenerals,
@@ -148,6 +149,34 @@ export function registerSocketHandlers(io: SocketIOServer, socket: Socket) {
             broadcastGameState(io, room)
         } catch (e) {
             socket.emit(SocketEvents.ERROR, { message: '加入房间失败' })
+        }
+    })
+
+    // ─── 重连房间 ──────────────────────────────────────────
+    socket.on(SocketEvents.REJOIN_ROOM, (data: { roomCode: string; playerId: string }) => {
+        try {
+            const result = rejoinRoom(socket.id, data.roomCode, data.playerId)
+            if ('error' in result) {
+                return socket.emit(SocketEvents.REJOIN_FAIL, { message: result.error })
+            }
+
+            const { room } = result
+            socket.join(`player:${data.playerId}`)
+            socket.join(`room:${room.roomCode}`)
+
+            addLog(room.gameState, `【${room.gameState.players[data.playerId]?.nickname}】重新连接`)
+
+            socket.emit(SocketEvents.REJOIN_OK, {
+                playerId: data.playerId,
+                roomCode: room.roomCode,
+            })
+
+            // 发送当前游戏状态
+            const view = toClientView(room.gameState, data.playerId)
+            socket.emit(SocketEvents.GAME_STATE_UPDATE, { state: view })
+            broadcastGameState(io, room)
+        } catch (e) {
+            socket.emit(SocketEvents.REJOIN_FAIL, { message: '重连失败' })
         }
     })
 

@@ -19,6 +19,35 @@ import {
     S2C_Error,
 } from 'sgs3v3-shared'
 
+// ── localStorage 会话持久化 ──────────────────────────────────
+
+const SESSION_KEY = 'sgs3v3_session'
+
+interface SavedSession {
+    playerId: string
+    roomCode: string
+}
+
+export function saveSession(playerId: string, roomCode: string): void {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ playerId, roomCode }))
+}
+
+export function loadSession(): SavedSession | null {
+    try {
+        const raw = localStorage.getItem(SESSION_KEY)
+        if (!raw) return null
+        const data = JSON.parse(raw)
+        if (data.playerId && data.roomCode) return data as SavedSession
+        return null
+    } catch {
+        return null
+    }
+}
+
+export function clearSession(): void {
+    localStorage.removeItem(SESSION_KEY)
+}
+
 // ── Socket 单例 ──────────────────────────────────────────────
 
 let socket: Socket | null = null
@@ -44,6 +73,9 @@ export const emit = {
 
     joinRoom: (data: C2S_JoinRoom) =>
         getSocket().emit(SocketEvents.JOIN_ROOM, data),
+
+    rejoinRoom: (data: { roomCode: string; playerId: string }) =>
+        getSocket().emit(SocketEvents.REJOIN_ROOM, data),
 
     pickGeneral: (data: C2S_PickGeneral) =>
         getSocket().emit(SocketEvents.PICK_GENERAL, data),
@@ -81,6 +113,8 @@ export const emit = {
 export type SocketEventHandlers = {
     onRoomCreated?: (data: S2C_RoomCreated) => void
     onRoomJoined?: (data: S2C_RoomJoined) => void
+    onRejoinOk?: (data: { playerId: string; roomCode: string }) => void
+    onRejoinFail?: (data: { message: string }) => void
     onGameStateUpdate?: (data: S2C_GameStateUpdate) => void
     onGameOver?: (data: S2C_GameOver) => void
     onError?: (data: S2C_Error) => void
@@ -90,6 +124,8 @@ export function registerSocketListeners(handlers: SocketEventHandlers) {
     const s = getSocket()
     if (handlers.onRoomCreated) s.on(SocketEvents.ROOM_CREATED, handlers.onRoomCreated)
     if (handlers.onRoomJoined) s.on(SocketEvents.ROOM_JOINED, handlers.onRoomJoined)
+    if (handlers.onRejoinOk) s.on(SocketEvents.REJOIN_OK, handlers.onRejoinOk)
+    if (handlers.onRejoinFail) s.on(SocketEvents.REJOIN_FAIL, handlers.onRejoinFail)
     if (handlers.onGameStateUpdate) s.on(SocketEvents.GAME_STATE_UPDATE, handlers.onGameStateUpdate)
     if (handlers.onGameOver) s.on(SocketEvents.GAME_OVER, handlers.onGameOver)
     if (handlers.onError) s.on(SocketEvents.ERROR, handlers.onError)
@@ -99,6 +135,8 @@ export function unregisterSocketListeners(handlers: SocketEventHandlers) {
     const s = getSocket()
     if (handlers.onRoomCreated) s.off(SocketEvents.ROOM_CREATED, handlers.onRoomCreated)
     if (handlers.onRoomJoined) s.off(SocketEvents.ROOM_JOINED, handlers.onRoomJoined)
+    if (handlers.onRejoinOk) s.off(SocketEvents.REJOIN_OK, handlers.onRejoinOk)
+    if (handlers.onRejoinFail) s.off(SocketEvents.REJOIN_FAIL, handlers.onRejoinFail)
     if (handlers.onGameStateUpdate) s.off(SocketEvents.GAME_STATE_UPDATE, handlers.onGameStateUpdate)
     if (handlers.onGameOver) s.off(SocketEvents.GAME_OVER, handlers.onGameOver)
     if (handlers.onError) s.off(SocketEvents.ERROR, handlers.onError)
