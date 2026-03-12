@@ -222,7 +222,7 @@ const GENERALS: GeneralDefinition[] = [
         id: 'sunquan', name: '孙权', maxHp: 4, gender: 'male', kingdom: 'wu',
         skills: [{
             id: 'sunquan_zhiheng', name: '制衡',
-            description: '出牌阶段限一次，你可弃置任意张手牌，然后摸等量的牌。',
+            description: '出牌阶段限一次，你可弃置任意张牌，然后摸等量的牌。',
             type: SkillType.ACTIVE, trigger: SkillTrigger.ACTIVE,
         }],
     },

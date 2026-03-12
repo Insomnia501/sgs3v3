@@ -75,7 +75,7 @@ function ACTIVE_SKILLS_FOR(generalId: string): SkillDef[] {
         zhouyu: [{ id: 'zhouyu_fanjian', name: '反间', desc: '限一次：目标选花色→获你一牌→不同受1伤' }],
         liubei: [{ id: 'liubei_rende', name: '仁德', desc: '将手牌给其他角色，每给2张回1血' }],
         guanyu: [
-            { id: 'guanyu_wusheng', name: '武圣', desc: '将一张红色牌当杀使用' },
+            { id: 'guanyu_wusheng', name: '武圣', desc: '红色手牌当杀使用（切换模式）' },
             { id: 'guanyu_zhongyi', name: '忠义', desc: '限定：置红牌，己方杀+1伤' },
         ],
         jiaxu: [{ id: 'jiaxu_luanwu', name: '乱武', desc: '限定：所有其他角色出杀或失1血' }],
@@ -327,7 +327,11 @@ export default function GamePage() {
 
     function handleUseCard() {
         if (selectedCardIds.length === 0) return
-        const extra = isAoeCard ? { direction: aoeDirection } : undefined
+        let extra: any = isAoeCard ? { direction: aoeDirection } : undefined
+        // 武圣模式：通知服务端红色牌当杀
+        if (activeSkillId === 'guanyu_wusheng') {
+            extra = { ...extra, wusheng: true }
+        }
         emit.useCard({ cardId: selectedCardIds[0], targetIndices: selectedTargets, extra })
         clearSelection()
         setActiveSkillId(null)
@@ -410,10 +414,10 @@ export default function GamePage() {
                         <div className="action-choice-label" style={{ color: '#ffd700' }}>
                             请选择：先手 或 让先
                         </div>
-                        <button className="btn btn-primary" onClick={() => emit.yieldChoice({ yield: false })}>
+                        <button className="btn btn-secondary" onClick={() => emit.yieldChoice({ yield: false })}>
                             先手（我方先行动）
                         </button>
-                        <button className="btn btn-secondary" onClick={() => emit.yieldChoice({ yield: true })}>
+                        <button className="btn btn-primary" onClick={() => emit.yieldChoice({ yield: true })}>
                             让先（对方先行动）
                         </button>
                     </div>
@@ -567,6 +571,7 @@ export default function GamePage() {
                         [ResponseType.AOE_ATTACK]: `等待${whoName}出杀（南蛮入侵）`,
                         [ResponseType.EQUIP_DOUBLE_SWORDS_CHOICE]: `${whoName}：弃1手牌或让对方摸1牌（雌雄双股剑）`,
                         [ResponseType.EQUIP_KYLIN_BOW_CHOICE]: `${whoName}：选择弃目标哪匹马（麒麟弓）`,
+                        [ResponseType.EQUIP_ICE_SWORD_PICK]: `${whoName}：选择弃目标的牌（寒冰剑）`,
 
                         [ResponseType.TRICK_TARGET_CARD_PICK]: `${whoName}：选择${(pendingResponse.context as any)?.trickType === 'dismantle' ? '弃' : '拿'}目标的哪张牌`,
                         [ResponseType.BORROW_SWORD_RESPONSE]: `${whoName}：出杀或交出武器（借刀杀人）`,
@@ -653,19 +658,47 @@ export default function GamePage() {
                                     onTooltipLeave={tooltipLeave}
                                 />
                             ))}
-                            {/* 技能激活时显示可选装备牌 */}
-                            {activeSkillId && (() => {
-                                // 定义哪些技能可以用装备牌
+                            {/* 技能激活或特定响应时显示可选装备牌 */}
+                            {(() => {
+                                // 定义哪些主动技能可以用装备牌
                                 const equipSkillFilter: Record<string, (card: Card) => boolean> = {
                                     'ganning_qixi': (c) => c.suit === CardSuit.SPADE || c.suit === CardSuit.CLUB,
-                                    'guanyu_wusheng': (c) => c.suit === CardSuit.HEART || c.suit === CardSuit.DIAMOND,
+                                    'diaochan_lijian': () => true,
+                                    'xuhuang_duanliang': (c) => (c.suit === CardSuit.SPADE || c.suit === CardSuit.CLUB),
+                                    'daqiao_guose': (c) => c.suit === CardSuit.DIAMOND,
+                                    'sunquan_zhiheng': () => true,
+                                    'equip_zhangba_spear': () => true,
                                 }
-                                const filter = equipSkillFilter[activeSkillId]
+                                let filter: ((card: Card) => boolean) | null = null
+                                if (activeSkillId) {
+                                    filter = equipSkillFilter[activeSkillId] ?? null
+                                } else if (myPendingResponse && isViewingResponding && pendingResponse) {
+                                    // 响应阶段：急救(红色牌)、缓释/鬼才(任意牌)、贯石斧(任意牌)
+                                    if (pendingResponse.type === ResponseType.PEACH_SAVE_ASK) {
+                                        // 急救(红色牌) + 救主(任意牌)
+                                        const responder = gameState.generals[pendingResponse.targetGeneralIndex]
+                                        const hasJiuzhu = responder?.generalId === 'zhaoyun'
+                                        const hasJijiu = responder?.generalId === 'huatuo'
+                                        if (hasJiuzhu) {
+                                            filter = () => true // 救主可以弃任意牌
+                                        } else if (hasJijiu) {
+                                            filter = (c) => c.suit === CardSuit.HEART || c.suit === CardSuit.DIAMOND
+                                        }
+                                    } else if (pendingResponse.type === ResponseType.JUDGE_INTERVENE) {
+                                        // 只有缓释（诸葛瑾）可以用装备牌，鬼才（司马懿）不行
+                                        const responder = gameState.generals[pendingResponse.targetGeneralIndex]
+                                        if (responder?.generalId === 'zhugejin') filter = () => true
+                                    } else if (pendingResponse.type === ResponseType.SKILL_ACTIVATE_CONFIRM
+                                        && (pendingResponse.context as any)?.skillId === 'equip_stone_axe') {
+                                        filter = () => true
+                                    }
+                                }
                                 if (!filter || !displayGeneral) return null
+                                const f = filter
                                 const equipCards: Card[] = []
                                 for (const slot of ['weapon', 'armor', 'plus_horse', 'minus_horse'] as const) {
                                     const card = displayGeneral.equip[slot]
-                                    if (card && filter(card)) equipCards.push(card)
+                                    if (card && f(card)) equipCards.push(card)
                                 }
                                 if (equipCards.length === 0) return null
                                 return (
@@ -686,7 +719,12 @@ export default function GamePage() {
                 </div>
 
                 <div className="action-btns">
-                    {isActionPhase && isMyTurn && isViewingActive && !gameState.pendingResponse && !gameState.negateWindow && (
+                    {isActionPhase && isMyTurn && isViewingActive && !gameState.pendingResponse && !gameState.negateWindow && (() => {
+                        // toggle模式技能：激活后仍用"出牌"按钮，不显示"确认发动"
+                        const TOGGLE_SKILLS = ['guanyu_wusheng']
+                        const isToggleSkillActive = activeSkillId && TOGGLE_SKILLS.includes(activeSkillId)
+                        const isNonToggleSkillActive = activeSkillId && !isToggleSkillActive
+                        return (
                         <>
                             <button className="btn btn-primary" disabled={selectedCardIds.length === 0} onClick={handleUseCard}>出牌</button>
                             {/* AOE方向选择：显示相邻武将名表示方向 */}
@@ -702,8 +740,20 @@ export default function GamePage() {
                                     </button>
                                 </>
                             )}
-                            {!activeSkillId && <button className="btn" onClick={handleEndTurn}>结束出牌</button>}
-                            {/* 主动技能按钮 */}
+                            {!isNonToggleSkillActive && <button className="btn" onClick={handleEndTurn}>结束出牌</button>}
+                            {/* toggle模式技能激活中：显示高亮标签和取消 */}
+                            {isToggleSkillActive && (() => {
+                                const skillDef = activeGeneral ? ACTIVE_SKILLS_FOR(activeGeneral.generalId).find(s => s.id === activeSkillId) : null
+                                return (
+                                    <>
+                                        <span style={{ color: '#ffd700', fontWeight: 'bold', fontSize: '12px' }}>
+                                            {skillDef?.name ?? activeSkillId} 模式
+                                        </span>
+                                        <button className="btn btn-secondary" onClick={handleCancelSkill}>取消{skillDef?.name}</button>
+                                    </>
+                                )
+                            })()}
+                            {/* 主动技能按钮（toggle和非toggle技能都未激活时显示） */}
                             {!activeSkillId && activeGeneral && ACTIVE_SKILLS_FOR(activeGeneral.generalId).map(skill => {
                                 const usedThisTurn = activeGeneral.skillsUsedThisTurn?.includes(skill.id)
                                 const usedLimited = activeGeneral.usedLimitedSkills?.includes(skill.id)
@@ -725,11 +775,11 @@ export default function GamePage() {
                                     </button>
                                 )
                             })}
-                            {/* 技能激活中：显示确认/取消按钮 */}
-                            {activeSkillId && (() => {
+                            {/* 非toggle技能激活中：显示确认/取消按钮 */}
+                            {isNonToggleSkillActive && (() => {
                                 const skillDef = activeGeneral ? ACTIVE_SKILLS_FOR(activeGeneral.generalId).find(s => s.id === activeSkillId) : null
                                 const equipSkillNames: Record<string, string> = { equip_zhangba_spear: '丈八蛇矛' }
-                                const displayName = skillDef?.name ?? equipSkillNames[activeSkillId] ?? activeSkillId
+                                const displayName = skillDef?.name ?? equipSkillNames[activeSkillId!] ?? activeSkillId
                                 return (
                                     <>
                                         <span style={{ color: '#ffd700', fontWeight: 'bold', marginRight: '8px' }}>
@@ -754,7 +804,8 @@ export default function GamePage() {
                                 </button>
                             )}
                         </>
-                    )}
+                        )
+                    })()}
                     {isDiscardPhase && isMyTurn && isViewingActive && !gameState.pendingResponse && !gameState.negateWindow && (
                         <button className="btn btn-primary" disabled={selectedCardIds.length === 0} onClick={handleDiscard}>弃牌确认</button>
                     )}
@@ -884,20 +935,29 @@ export default function GamePage() {
                                 onClick={() => handleRespond(undefined, { action: 'damage' } as any)}>受1伤</button>
                         </>
                     )}
-                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_YIJI_DISTRIBUTE && (
-                        <>
-                            <span className="skill-confirm-label">
-                                遗计：选手牌分给一名角色（剩余{(pendingResponse.context as any)?.remaining ?? 0}次）
-                            </span>
-                            <button className="btn btn-skill"
-                                disabled={selectedCardIds.length === 0 || selectedTargets.length === 0}
-                                onClick={() => handleRespond(selectedCardIds[0], { targetIndex: selectedTargets[0] } as any)}>
-                                分配给选定角色
-                            </button>
-                            <button className="btn"
-                                onClick={() => handleRespond(undefined)}>跳过</button>
-                        </>
-                    )}
+                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_YIJI_DISTRIBUTE && (() => {
+                        const remaining = (pendingResponse.context as any)?.remaining ?? 0
+                        const yijiCardIds = (pendingResponse.context as any)?.yijiCardIds as string[] ?? []
+                        // 只允许选择遗计可分配的手牌
+                        const validSelected = selectedCardIds.filter(id => yijiCardIds.includes(id))
+                        return (
+                            <>
+                                <span className="skill-confirm-label">
+                                    遗计：选择手牌分给一名角色（剩余{remaining}张，已选{validSelected.length}张）
+                                </span>
+                                <button className="btn btn-skill"
+                                    disabled={validSelected.length === 0 || selectedTargets.length === 0}
+                                    onClick={() => emit.respond({
+                                        cardIds: validSelected,
+                                        targetIndex: selectedTargets[0],
+                                    } as any)}>
+                                    分配{validSelected.length}张给选定角色
+                                </button>
+                                <button className="btn"
+                                    onClick={() => handleRespond(undefined)}>跳过（保留剩余牌）</button>
+                            </>
+                        )
+                    })()}
                     {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_LUANWU_PICK_TARGET && (
                         <>
                             <span className="skill-confirm-label">选择杀的目标：</span>
@@ -941,18 +1001,23 @@ export default function GamePage() {
                         </>
                     )}
                     {/* 突袭：选角色 */}
-                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_TUXI_CHOOSE && (
-                        <>
-                            <span className="skill-confirm-label">突袭：选择一名有手牌的角色（点击角色区域）</span>
-                            {selectedTargets.length > 0 && (
-                                <button className="btn btn-skill"
-                                    onClick={() => emit.respond({ targetIndex: selectedTargets[0] } as any)}>
-                                    确认偷牌
-                                </button>
-                            )}
-                            <button className="btn" onClick={() => handleRespond(undefined)}>结束突袭</button>
-                        </>
-                    )}
+                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_TUXI_CHOOSE && (() => {
+                        const remaining = (pendingResponse.context as any)?.remainingPicks ?? 2
+                        return (
+                            <>
+                                <span className="skill-confirm-label">
+                                    突袭：选择至多{remaining}名有手牌的角色（已选{selectedTargets.length}名）
+                                </span>
+                                {selectedTargets.length > 0 && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ targetIndices: selectedTargets } as any)}>
+                                        确认突袭（{selectedTargets.length}名）
+                                    </button>
+                                )}
+                                <button className="btn" onClick={() => handleRespond(undefined)}>结束突袭</button>
+                            </>
+                        )
+                    })()}
                     {/* 神速：选目标 */}
                     {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.SKILL_SHENSU_TARGET && (
                         <>
@@ -1223,36 +1288,44 @@ export default function GamePage() {
                         return (
                             <>
                                 <span className="skill-confirm-label">{trickLabel}：选择{actionLabel}目标的哪张牌</span>
-                                {pickTarget && handLen > 0 && (
-                                    <button className="btn btn-secondary"
-                                        onClick={() => emit.respond({ action: 'hand' } as any)}>
-                                        手牌(随机)
-                                    </button>
-                                )}
-                                {pickTarget?.equip?.weapon && (
-                                    <button className="btn btn-skill"
-                                        onClick={() => emit.respond({ action: 'weapon' } as any)}>
-                                        武器
-                                    </button>
-                                )}
-                                {pickTarget?.equip?.armor && (
-                                    <button className="btn btn-skill"
-                                        onClick={() => emit.respond({ action: 'armor' } as any)}>
-                                        防具
-                                    </button>
-                                )}
-                                {pickTarget?.equip?.plus_horse && (
-                                    <button className="btn btn-skill"
-                                        onClick={() => emit.respond({ action: 'plus_horse' } as any)}>
-                                        +1马
-                                    </button>
-                                )}
-                                {pickTarget?.equip?.minus_horse && (
-                                    <button className="btn btn-skill"
-                                        onClick={() => emit.respond({ action: 'minus_horse' } as any)}>
-                                        -1马
-                                    </button>
-                                )}
+                                <div className="trick-pick-grid">
+                                    {pickTarget && handLen > 0 && (
+                                        <button className="btn btn-secondary"
+                                            onClick={() => emit.respond({ action: 'hand' } as any)}>
+                                            手牌(随机)
+                                        </button>
+                                    )}
+                                    {pickTarget?.equip?.weapon && (
+                                        <button className="btn btn-skill"
+                                            onClick={() => emit.respond({ action: 'weapon' } as any)}>
+                                            武器：{CARD_NAMES[pickTarget.equip.weapon.name] ?? '武器'}
+                                        </button>
+                                    )}
+                                    {pickTarget?.equip?.armor && (
+                                        <button className="btn btn-skill"
+                                            onClick={() => emit.respond({ action: 'armor' } as any)}>
+                                            防具：{CARD_NAMES[pickTarget.equip.armor.name] ?? '防具'}
+                                        </button>
+                                    )}
+                                    {pickTarget?.equip?.plus_horse && (
+                                        <button className="btn btn-skill"
+                                            onClick={() => emit.respond({ action: 'plus_horse' } as any)}>
+                                            +1马
+                                        </button>
+                                    )}
+                                    {pickTarget?.equip?.minus_horse && (
+                                        <button className="btn btn-skill"
+                                            onClick={() => emit.respond({ action: 'minus_horse' } as any)}>
+                                            -1马
+                                        </button>
+                                    )}
+                                    {pickTarget?.judgeZone && pickTarget.judgeZone.length > 0 && pickTarget.judgeZone.map((jc: any) => (
+                                        <button key={jc.id} className="btn btn-secondary"
+                                            onClick={() => emit.respond({ action: 'judge', cardId: jc.id } as any)}>
+                                            判定区：{jc.name === 'overindulgence' ? '乐不思蜀' : '兵粮寸断'}
+                                        </button>
+                                    ))}
+                                </div>
                             </>
                         )
                     })()}
@@ -1284,6 +1357,50 @@ export default function GamePage() {
                             </button>
                         </>
                     )}
+                    {/* 寒冰剑：选择弃目标的牌 */}
+                    {myPendingResponse && isViewingResponding && pendingResponse?.type === ResponseType.EQUIP_ICE_SWORD_PICK && (() => {
+                        const iceCtx = pendingResponse.context as any
+                        const iceTarget = gameState.generals[iceCtx.iceTargetIndex]
+                        const remaining = iceCtx.remainingPicks ?? 0
+                        const iceTargetName = iceTarget ? (GENERAL_NAMES[iceTarget.generalId] ?? iceTarget.generalId) : '目标'
+                        return (
+                            <>
+                                <span className="skill-confirm-label">
+                                    寒冰剑：选择弃【{iceTargetName}】的牌（剩余{remaining}次）
+                                </span>
+                                {(iceTarget?.handCount > 0 || (iceTarget?.hand && iceTarget.hand.length > 0)) && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ action: 'hand' } as any)}>
+                                        手牌（随机）
+                                    </button>
+                                )}
+                                {iceTarget?.equip?.weapon && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ action: 'weapon' } as any)}>
+                                        武器：{CARD_NAMES[iceTarget.equip.weapon.name] ?? '武器'}
+                                    </button>
+                                )}
+                                {iceTarget?.equip?.armor && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ action: 'armor' } as any)}>
+                                        防具：{CARD_NAMES[iceTarget.equip.armor.name] ?? '防具'}
+                                    </button>
+                                )}
+                                {iceTarget?.equip?.plus_horse && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ action: 'plus_horse' } as any)}>
+                                        +1马：{CARD_NAMES[iceTarget.equip.plus_horse.name] ?? '+1马'}
+                                    </button>
+                                )}
+                                {iceTarget?.equip?.minus_horse && (
+                                    <button className="btn btn-skill"
+                                        onClick={() => emit.respond({ action: 'minus_horse' } as any)}>
+                                        -1马：{CARD_NAMES[iceTarget.equip.minus_horse.name] ?? '-1马'}
+                                    </button>
+                                )}
+                            </>
+                        )
+                    })()}
                     {/* 通用响应：出牌/放弃（排除所有专属类型） */}
                     {myPendingResponse
                         && isViewingResponding
@@ -1297,6 +1414,7 @@ export default function GamePage() {
                         && pendingResponse?.type !== ResponseType.HARVEST_PICK
                         && pendingResponse?.type !== ResponseType.EQUIP_DOUBLE_SWORDS_CHOICE
                         && pendingResponse?.type !== ResponseType.EQUIP_KYLIN_BOW_CHOICE
+                        && pendingResponse?.type !== ResponseType.EQUIP_ICE_SWORD_PICK
 
                         && pendingResponse?.type !== ResponseType.TRICK_TARGET_CARD_PICK
                         && pendingResponse?.type !== ResponseType.BORROW_SWORD_RESPONSE
@@ -1310,16 +1428,26 @@ export default function GamePage() {
                         && pendingResponse?.type !== ResponseType.SKILL_LIULI_REDIRECT
                         && pendingResponse?.type !== ResponseType.SKILL_YINGHUN_DISCARD && (
                             <>
-                                {/* 八卦阵按钮：在 DODGE / AOE_DODGE 响应中 */}
+                                {/* 八卦阵按钮 + 倾国按钮：在 DODGE / AOE_DODGE 响应中 */}
                                 {(pendingResponse?.type === ResponseType.DODGE || pendingResponse?.type === ResponseType.AOE_DODGE) && (() => {
                                     const rGeneral = gameState.generals[pendingResponse.targetGeneralIndex]
                                     const hasEightTrigrams = rGeneral?.equip?.armor?.name === 'eight_trigrams'
-                                    return hasEightTrigrams ? (
-                                        <button className="btn btn-skill"
-                                            onClick={() => emit.respond({ action: 'eight_trigrams' } as any)}>
-                                            八卦阵判定
-                                        </button>
-                                    ) : null
+                                    const hasQingguo = rGeneral?.generalId === 'zhenji'
+                                    return (
+                                        <>
+                                            {hasEightTrigrams && (
+                                                <button className="btn btn-skill"
+                                                    onClick={() => emit.respond({ action: 'eight_trigrams' } as any)}>
+                                                    八卦阵判定
+                                                </button>
+                                            )}
+                                            {hasQingguo && (
+                                                <span style={{ color: '#a0d0ff', fontWeight: 'bold', fontSize: '12px' }}>
+                                                    倾国：黑色手牌可当闪
+                                                </span>
+                                            )}
+                                        </>
+                                    )
                                 })()}
                                 <button className="btn btn-secondary" disabled={selectedCardIds.length === 0}
                                     onClick={() => handleRespond(selectedCardIds[0])}>出牌响应</button>

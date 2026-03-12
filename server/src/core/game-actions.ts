@@ -506,16 +506,18 @@ export function resolveSkillJudge(
                     }
                     addLog(state, `【${name}】抵挡万箭齐发`)
                 } else {
-                    // 杀：找到对应的 DODGE pending 并标记已成功
+                    // 杀：找到对应的 DODGE pending 并移除
                     const dodgePendingIdx = state.pendingResponseQueue.findIndex(
                         p => p.type === ResponseType.DODGE && p.targetGeneralIndex === state.generals.indexOf(judgingGeneral)
                     )
                     if (dodgePendingIdx >= 0) {
                         const dodgePending = state.pendingResponseQueue[dodgePendingIdx]
                         const dodgeCtx = dodgePending.context as any
-                        dodgeCtx.dodgesReceived = dodgeCtx.requiredDodges
+                        // 先用 splice 精确移除 DODGE pending，避免 shift 移除错误元素
+                        state.pendingResponseQueue.splice(dodgePendingIdx, 1)
                         addLog(state, `【${name}】成功防御【杀】`)
-                        handleDodgeSucceeded(state, judgingGeneral, dodgeCtx)
+                        // 处理武器效果（贯石斧/青龙偃月刀/猛进等）
+                        handleDodgeSucceededAfterRemoval(state, judgingGeneral, dodgeCtx)
                     }
                 }
             } else {
@@ -600,6 +602,7 @@ function removeCardFromHandOrEquip(
     if (handIdx >= 0) {
         const card = general.hand.splice(handIdx, 1)[0]
         state.discard.push(card)
+        checkMingzhe(state, general, card)
         return card
     }
     for (const slot of Object.values(EquipSlot)) {
@@ -607,6 +610,32 @@ function removeCardFromHandOrEquip(
             const card = general.equip[slot]!
             general.equip[slot] = undefined as any
             state.discard.push(card)
+            triggerXiaoji(state, general)
+            checkMingzhe(state, general, card)
+            return card
+        }
+    }
+    return { error: '找不到该牌' }
+}
+
+/**
+ * 从手牌或装备区移除一张牌但不放入弃牌堆（用于国色/断粮等放入判定区的场景）
+ * 仍然触发枭姬
+ */
+function detachCardFromHandOrEquip(
+    state: GameState,
+    general: GeneralInstance,
+    cardId: string,
+): Card | { error: string } {
+    const handIdx = general.hand.findIndex(c => c.id === cardId)
+    if (handIdx >= 0) {
+        const card = general.hand.splice(handIdx, 1)[0]
+        return card
+    }
+    for (const slot of Object.values(EquipSlot)) {
+        if (general.equip[slot]?.id === cardId) {
+            const card = general.equip[slot]!
+            general.equip[slot] = undefined as any
             triggerXiaoji(state, general)
             return card
         }
@@ -687,22 +716,24 @@ export function dealDamage(
             addLog(state, `【${tgtName}】可发动【奸雄】`)
         }
 
-        // 反馈（司马懿）：受伤后可获得伤害来源的一张牌
+        // 反馈（司马懿）：每受1点伤害可发动一次
         if (hasSkill(target, 'simayi_fankui') && attacker) {
             const atkCards = attacker.hand.length
             const atkEquips = Object.values(attacker.equip).filter(Boolean).length
             if (atkCards + atkEquips > 0) {
-                state.pendingResponseQueue.unshift({
-                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                    targetGeneralIndex: state.generals.indexOf(target),
-                    context: {
-                        skillId: 'simayi_fankui',
-                        skillName: '反馈',
-                        description: `获取【${getGeneralName(attacker)}】的一张牌`,
-                        sourceGeneralIndex: state.generals.indexOf(attacker),
-                    },
-                })
-                addLog(state, `【${tgtName}】可发动【反馈】`)
+                for (let fi = 0; fi < amount; fi++) {
+                    state.pendingResponseQueue.unshift({
+                        type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                        targetGeneralIndex: state.generals.indexOf(target),
+                        context: {
+                            skillId: 'simayi_fankui',
+                            skillName: '反馈',
+                            description: `获取【${getGeneralName(attacker)}】的一张牌（第${fi + 1}/${amount}次）`,
+                            sourceGeneralIndex: state.generals.indexOf(attacker),
+                        },
+                    })
+                }
+                addLog(state, `【${tgtName}】可发动【反馈】（${amount}次）`)
             }
         }
 
@@ -722,19 +753,21 @@ export function dealDamage(
             addLog(state, `【${tgtName}】可发动【遗计】（${amount}次）`)
         }
 
-        // 刚烈（夏侯惇）：受伤后可选择发动判定
+        // 刚烈（夏侯惇）：每受1点伤害可发动一次
         if (hasSkill(target, 'xiahoudun_ganglie') && attacker && state.deck.length > 0) {
-            state.pendingResponseQueue.unshift({
-                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                targetGeneralIndex: state.generals.indexOf(target),
-                context: {
-                    skillId: 'xiahoudun_ganglie',
-                    skillName: '刚烈',
-                    description: '判定，非♥则来源弃2牌或受1伤',
-                    attackerGeneralIndex: state.generals.indexOf(attacker),
-                },
-            })
-            addLog(state, `【${tgtName}】可发动【刚烈】`)
+            for (let gi = 0; gi < amount; gi++) {
+                state.pendingResponseQueue.unshift({
+                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                    targetGeneralIndex: state.generals.indexOf(target),
+                    context: {
+                        skillId: 'xiahoudun_ganglie',
+                        skillName: '刚烈',
+                        description: `判定，非♥则来源弃2牌或受1伤（第${gi + 1}/${amount}次）`,
+                        attackerGeneralIndex: state.generals.indexOf(attacker),
+                    },
+                })
+            }
+            addLog(state, `【${tgtName}】可发动【刚烈】（${amount}次）`)
         }
     }
 
@@ -817,19 +850,21 @@ function triggerDamagePassiveSkills(
     if (!target.alive || target.hp <= 0) return
     const tgtName = getGeneralName(target)
 
-    // 刚烈
+    // 刚烈：每受1点伤害可发动一次
     if (hasSkill(target, 'xiahoudun_ganglie') && attacker && state.deck.length > 0) {
-        state.pendingResponseQueue.unshift({
-            type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-            targetGeneralIndex: state.generals.indexOf(target),
-            context: {
-                skillId: 'xiahoudun_ganglie',
-                skillName: '刚烈',
-                description: '判定，非♥则来源弃2牌或受1伤',
-                attackerGeneralIndex: state.generals.indexOf(attacker),
-            },
-        })
-        addLog(state, `【${tgtName}】可发动【刚烈】`)
+        for (let gi = 0; gi < damageAmount; gi++) {
+            state.pendingResponseQueue.unshift({
+                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                targetGeneralIndex: state.generals.indexOf(target),
+                context: {
+                    skillId: 'xiahoudun_ganglie',
+                    skillName: '刚烈',
+                    description: `判定，非♥则来源弃2牌或受1伤（第${gi + 1}/${damageAmount}次）`,
+                    attackerGeneralIndex: state.generals.indexOf(attacker),
+                },
+            })
+        }
+        addLog(state, `【${tgtName}】可发动【刚烈】（${damageAmount}次）`)
     }
 
     // 遗计：每受1点伤害可发动一次
@@ -848,22 +883,24 @@ function triggerDamagePassiveSkills(
         addLog(state, `【${tgtName}】可发动【遗计】（${damageAmount}次）`)
     }
 
-    // 反馈
+    // 反馈：每受1点伤害可发动一次
     if (hasSkill(target, 'simayi_fankui') && attacker) {
         const atkCards = attacker.hand.length
         const atkEquips = Object.values(attacker.equip).filter(Boolean).length
         if (atkCards + atkEquips > 0) {
-            state.pendingResponseQueue.unshift({
-                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                targetGeneralIndex: state.generals.indexOf(target),
-                context: {
-                    skillId: 'simayi_fankui',
-                    skillName: '反馈',
-                    description: `获取【${getGeneralName(attacker)}】的一张牌`,
-                    sourceGeneralIndex: state.generals.indexOf(attacker),
-                },
-            })
-            addLog(state, `【${tgtName}】可发动【反馈】`)
+            for (let fi = 0; fi < damageAmount; fi++) {
+                state.pendingResponseQueue.unshift({
+                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                    targetGeneralIndex: state.generals.indexOf(target),
+                    context: {
+                        skillId: 'simayi_fankui',
+                        skillName: '反馈',
+                        description: `获取【${getGeneralName(attacker)}】的一张牌（第${fi + 1}/${damageAmount}次）`,
+                        sourceGeneralIndex: state.generals.indexOf(attacker),
+                    },
+                })
+            }
+            addLog(state, `【${tgtName}】可发动【反馈】（${damageAmount}次）`)
         }
     }
 
@@ -942,6 +979,13 @@ export function handleUseCard(
         })
     }
 
+    // 武圣（关羽）：客户端激活武圣模式后，红色牌当杀使用
+    if (data.extra?.wusheng && hasSkill(general, 'guanyu_wusheng')) {
+        const isRedCard = card.suit === CardSuit.HEART || card.suit === CardSuit.DIAMOND
+        if (!isRedCard) return { error: '武圣须使用红色牌' }
+        return handleWushengAttack(state, general, card, cardIdx, targets)
+    }
+
     if (card.category === CardCategory.BASIC) {
         return handleBasicCard(state, general, card, cardIdx, targets)
     }
@@ -964,7 +1008,7 @@ function handleBasicCard(
 ): { error: string } | void {
     const { name } = card
 
-    if (name === BasicCardName.ATTACK) {
+    if (name === BasicCardName.ATTACK || isCardUsableAsAttack(general, card)) {
         // 杀次数限制
         let maxAttacks = 1
         if (hasSkill(general, 'zhangfei_paoxiao')) {
@@ -983,6 +1027,11 @@ function handleBasicCard(
         const maxTargets = (isLastCard && hasFangtian) ? 3 : 1
         if (targets.length < 1 || targets.length > maxTargets) {
             return { error: maxTargets > 1 ? `方天画戟最多指定${maxTargets}个目标` : '【杀】需要指定一个目标' }
+        }
+
+        // 不能杀自己
+        if (targets.some(t => t === general)) {
+            return { error: '不能对自己使用【杀】' }
         }
 
         // 空城：诸葛亮无手牌时不能被杀指定
@@ -1131,6 +1180,140 @@ function handleBasicCard(
     if (name === BasicCardName.DODGE) {
         return { error: '【闪】不能主动使用' }
     }
+}
+
+/** 武圣（关羽）：将红色牌当杀使用，走完整杀逻辑（含武器效果） */
+function handleWushengAttack(
+    state: GameState,
+    general: GeneralInstance,
+    card: Card,
+    cardIdx: number,
+    targets: GeneralInstance[]
+): { error: string } | void {
+    // 杀次数限制
+    let maxAttacks = 1
+    if (hasSkill(general, 'zhangfei_paoxiao')) {
+        maxAttacks = 999
+    } else if (general.equip.weapon?.name === EquipmentCardName.CROSSBOW) {
+        maxAttacks = 4
+    }
+    if (state.attackUsedThisTurn >= maxAttacks) return { error: `每回合最多使用 ${maxAttacks} 张【杀】` }
+
+    // 方天画戟：最后一张手牌为杀时可额外指定最多2个目标
+    const isLastCard = general.hand.length === 1
+    const hasFangtian = general.equip.weapon?.name === EquipmentCardName.FANGTIAN_HALBERD
+    const maxTargets = (isLastCard && hasFangtian) ? 3 : 1
+    if (targets.length < 1 || targets.length > maxTargets) {
+        return { error: maxTargets > 1 ? `方天画戟最多指定${maxTargets}个目标` : '【杀】需要指定一个目标' }
+    }
+
+    if (targets.some(t => t === general)) return { error: '不能对自己使用【杀】' }
+    for (const t of targets) {
+        if (hasSkill(t, 'zhugeliang_kongcheng') && t.hand.length === 0) {
+            return { error: `【${getGeneralName(t)}】发动【空城】，不能被【杀】指定` }
+        }
+    }
+    for (const t of targets) {
+        const rangeInfo = getAttackRange(general, t, state.generals)
+        if (!rangeInfo.inRange) {
+            return { error: `【${getGeneralName(t)}】距离太远（距离${rangeInfo.distance}，攻击范围${rangeInfo.range}）` }
+        }
+    }
+
+    general.hand.splice(cardIdx, 1)
+    state.discard.push(card)
+    state.attackUsedThisTurn++
+
+    const targetNames = targets.map(t => `【${getGeneralName(t)}】`).join('、')
+    addLog(state, `【${getGeneralName(general)}】发动【武圣】，将${suitSymbol(card.suit)}${valueName(card.value)}当杀对${targetNames}使用${hasFangtian && targets.length > 1 ? '（方天画戟）' : ''}`)
+
+    // 激昂（孙策）：红色杀
+    if (hasSkill(general, 'sunce_jiang')) {
+        const bonus = drawCards(state, 1)
+        general.hand.push(...bonus)
+        addLog(state, `【${getGeneralName(general)}】发动【激昂】摸 1 张牌`)
+    }
+    for (const t of targets) {
+        if (hasSkill(t, 'sunce_jiang')) {
+            const bonus = drawCards(state, 1)
+            t.hand.push(...bonus)
+            addLog(state, `【${getGeneralName(t)}】发动【激昂】摸 1 张牌`)
+        }
+    }
+
+    const attackerIdx = state.generals.indexOf(general)
+    const attackerDef = getGeneralById(general.generalId)
+
+    for (let i = targets.length - 1; i >= 0; i--) {
+        const target = targets[i]
+        const targetIdx = state.generals.indexOf(target)
+
+        let tieqiPending = false
+        if (hasSkill(general, 'machao_tieqi') && state.deck.length > 0) {
+            tieqiPending = true
+        }
+
+        // 仁王盾：黑色杀无效（武圣杀一定是红色，不会触发）
+        const requiredDodges = hasSkill(general, 'lvbu_wushuang') ? 2 : 1
+
+        if (hasSkill(target, 'daqiao_liuli') && (target.hand.length > 0 || target.equip.weapon || target.equip.armor || target.equip.plus_horse || target.equip.minus_horse)) {
+            state.pendingResponseQueue.unshift({
+                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                targetGeneralIndex: targetIdx,
+                context: {
+                    skillId: 'daqiao_liuli',
+                    skillName: '流离',
+                    description: '弃1张牌，将此杀转移给攻击范围内另一角色',
+                    attackerIndex: attackerIdx,
+                    attackCard: card,
+                    requiredDodges,
+                },
+            })
+            continue
+        }
+
+        state.pendingResponseQueue.unshift({
+            type: ResponseType.DODGE,
+            targetGeneralIndex: targetIdx,
+            context: {
+                attackerGeneralIndex: attackerIdx,
+                requiredDodges,
+                dodgesReceived: 0,
+                attackCard: card,
+            },
+        })
+
+        if (tieqiPending) {
+            state.pendingResponseQueue.unshift({
+                type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                targetGeneralIndex: attackerIdx,
+                context: {
+                    skillId: 'machao_tieqi',
+                    skillName: '铁骑',
+                    description: `对【${getGeneralName(target)}】发动铁骑？判定红色则目标不能出闪`,
+                    tieqiTargetIndex: targetIdx,
+                    attackCardId: card.id,
+                },
+            })
+        }
+
+        if (general.equip.weapon?.name === EquipmentCardName.DOUBLE_SWORDS) {
+            const targetDef = getGeneralById(target.generalId)
+            if (attackerDef && targetDef && attackerDef.gender !== targetDef.gender) {
+                state.pendingResponseQueue.unshift({
+                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
+                    targetGeneralIndex: attackerIdx,
+                    context: {
+                        skillId: 'equip_double_swords',
+                        skillName: '雌雄双股剑',
+                        description: `对异性【${getGeneralName(target)}】出杀，令其弃1牌或你摸1牌`,
+                        targetIndex: targetIdx,
+                    },
+                })
+            }
+        }
+    }
+    return
 }
 
 // ─── 锦囊牌 ──────────────────────────────────────────────────
@@ -1576,15 +1759,22 @@ export function handleUseSkill(
             if (!hasSkill(general, 'sunshangxiang_jieyin')) return { error: '你没有此技能' }
             const err = checkOncePerTurn('sunshangxiang_jieyin')
             if (err) return err
-            if (cardIds.length !== 2) return { error: '需弃置2张牌（手牌或装备）' }
+            if (cardIds.length !== 2) return { error: '需弃置2张手牌' }
             if (targets.length !== 1) return { error: '请选择1名已受伤男性角色' }
             const target = targets[0]
             const targetDef = getGeneralById(target.generalId)
             if (targetDef?.gender !== 'male') return { error: '目标必须是男性角色' }
             if (target.hp >= target.maxHp) return { error: '目标未受伤' }
+            // 结姻只能用手牌
             for (const cid of cardIds) {
-                const result = removeCardFromHandOrEquip(state, general, cid)
-                if ('error' in result) return result
+                const cardIdx = general.hand.findIndex(c => c.id === cid)
+                if (cardIdx === -1) return { error: '手牌中找不到此牌' }
+            }
+            for (const cid of cardIds) {
+                const cardIdx = general.hand.findIndex(c => c.id === cid)
+                const card = general.hand.splice(cardIdx, 1)[0]
+                state.discard.push(card)
+                checkMingzhe(state, general, card)
             }
             if (general.hp < general.maxHp) general.hp++
             if (target.hp < target.maxHp) target.hp++
@@ -1650,9 +1840,9 @@ export function handleUseSkill(
             const t1Def = getGeneralById(t1.generalId)
             const t2Def = getGeneralById(t2.generalId)
             if (t1Def?.gender !== 'male' || t2Def?.gender !== 'male') return { error: '目标必须是男性角色' }
-            const result = removeCardsFromHand(cardIds)
+            // 支持手牌和装备牌
+            const result = removeCardFromHandOrEquip(state, general, cardIds[0])
             if ('error' in result) return result
-            state.discard.push(...result)
             markUsed('diaochan_lijian')
             addLog(state, `【${name}】发动【离间】，令【${getGeneralName(t1)}】与【${getGeneralName(t2)}】决斗`)
             state.pendingResponseQueue.unshift({
@@ -1689,100 +1879,6 @@ export function handleUseSkill(
                 healed = true
             }
             addLog(state, `【${name}】发动【仁德】，给了【${getGeneralName(target)}】${cardIds.length}张牌${healed ? '，回复1点体力' : ''}`)
-            return
-        }
-        // ── 武圣（关羽）：将一张红色牌当杀使用
-        case 'guanyu_wusheng': {
-            if (!hasSkill(general, 'guanyu_wusheng')) return { error: '你没有此技能' }
-            if (cardIds.length !== 1) return { error: '请选择1张红色牌' }
-            if (targets.length < 1) return { error: '请选择一个目标' }
-
-            // 支持手牌和装备红色牌
-            const card = findCardInHandOrEquip(general, cardIds[0])
-            if (!card) return { error: '找不到该牌' }
-            if (card.suit !== CardSuit.HEART && card.suit !== CardSuit.DIAMOND) return { error: '须为红色牌' }
-
-            // 杀次数限制
-            let maxAttacks = 1
-            if (hasSkill(general, 'zhangfei_paoxiao')) {
-                maxAttacks = 999
-            } else if (general.equip.weapon?.name === EquipmentCardName.CROSSBOW) {
-                maxAttacks = 4
-            }
-            if (state.attackUsedThisTurn >= maxAttacks) return { error: `每回合最多使用 ${maxAttacks} 张【杀】` }
-
-            const target = targets[0]
-            // 空城
-            if (hasSkill(target, 'zhugeliang_kongcheng') && target.hand.length === 0) {
-                return { error: '目标发动【空城】，不能被杀指定' }
-            }
-            // 攻击距离检查
-            const rangeInfo = getAttackRange(general, target, state.generals)
-            if (!rangeInfo.inRange) return { error: `目标距离太远（距离${rangeInfo.distance}，攻击范围${rangeInfo.range}）` }
-
-            removeCardFromHandOrEquip(state, general, cardIds[0])
-            state.attackUsedThisTurn++
-
-            addLog(state, `【${name}】发动【武圣】，将${suitSymbol(card.suit)}${valueName(card.value)}当杀对【${getGeneralName(target)}】使用`)
-
-            // 激昂（红色杀）
-            if (hasSkill(general, 'sunce_jiang')) {
-                const bonus = drawCards(state, 1)
-                general.hand.push(...bonus)
-                addLog(state, `【${name}】发动【激昂】摸 1 张牌`)
-            }
-            if (hasSkill(target, 'sunce_jiang')) {
-                const bonus = drawCards(state, 1)
-                target.hand.push(...bonus)
-                addLog(state, `【${getGeneralName(target)}】发动【激昂】摸 1 张牌`)
-            }
-
-            const attackerIdx = state.generals.indexOf(general)
-            const targetIdx = state.generals.indexOf(target)
-            const requiredDodges = hasSkill(general, 'lvbu_wushuang') ? 2 : 1
-
-            // 流离
-            if (hasSkill(target, 'daqiao_liuli') && (target.hand.length > 0 || target.equip.weapon || target.equip.armor || target.equip.plus_horse || target.equip.minus_horse)) {
-                state.pendingResponseQueue.unshift({
-                    type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                    targetGeneralIndex: targetIdx,
-                    context: {
-                        skillId: 'daqiao_liuli',
-                        skillName: '流离',
-                        description: '弃1张牌，将此杀转移给攻击范围内另一角色',
-                        attackerIndex: attackerIdx,
-                        attackCard: card,
-                        requiredDodges,
-                    },
-                })
-            } else {
-                // 推 DODGE 响应
-                state.pendingResponseQueue.unshift({
-                    type: ResponseType.DODGE,
-                    targetGeneralIndex: targetIdx,
-                    context: {
-                        attackerGeneralIndex: attackerIdx,
-                        requiredDodges,
-                        dodgesReceived: 0,
-                        attackCard: card,
-                    },
-                })
-
-                // 铁骑
-                if (hasSkill(general, 'machao_tieqi') && state.deck.length > 0) {
-                    state.pendingResponseQueue.unshift({
-                        type: ResponseType.SKILL_ACTIVATE_CONFIRM,
-                        targetGeneralIndex: attackerIdx,
-                        context: {
-                            skillId: 'machao_tieqi',
-                            skillName: '铁骑',
-                            description: `对【${getGeneralName(target)}】发动铁骑？判定红色则目标不能出闪`,
-                            tieqiTargetIndex: targetIdx,
-                            attackCardId: card.id,
-                        },
-                    })
-                }
-            }
             return
         }
 
@@ -1864,9 +1960,9 @@ export function handleUseSkill(
             if (!hasSkill(general, 'xuhuang_duanliang')) return { error: '你没有此技能' }
             if (cardIds.length !== 1) return { error: '请选择1张黑色基本/装备牌' }
             if (targets.length !== 1) return { error: '请选择1名目标' }
-            const cardIdx = general.hand.findIndex(c => c.id === cardIds[0])
-            if (cardIdx === -1) return { error: '手牌中找不到该牌' }
-            const card = general.hand[cardIdx]
+            // 支持手牌和装备牌
+            const card = findCardInHandOrEquip(general, cardIds[0])
+            if (!card) return { error: '找不到该牌' }
             if (card.suit !== CardSuit.SPADE && card.suit !== CardSuit.CLUB) return { error: '须为黑色牌' }
             if (card.category !== CardCategory.BASIC && card.category !== CardCategory.EQUIPMENT) return { error: '须为基本或装备牌' }
             const target = targets[0]
@@ -1876,10 +1972,13 @@ export function handleUseSkill(
                 if (rangeInfo.distance > 2) return { error: '目标距离太远（需距离2以内）' }
             }
             if (target.judgeZone.some(c => c.name === TrickCardName.SUPPLY_SHORTAGE)) return { error: '目标已有兵粮寸断' }
-            general.hand.splice(cardIdx, 1)
+            const removedCard = detachCardFromHandOrEquip(state, general, cardIds[0])
+            if ('error' in removedCard) return removedCard
             // 将此牌当兵粮寸断放入目标判定区
             target.judgeZone.push({
-                ...card,
+                ...removedCard,
+                originalName: removedCard.name,
+                originalCategory: removedCard.category,
                 name: TrickCardName.SUPPLY_SHORTAGE,
                 category: CardCategory.TRICK,
                 trickType: TrickType.DELAYED,
@@ -1893,15 +1992,18 @@ export function handleUseSkill(
             if (!hasSkill(general, 'daqiao_guose')) return { error: '你没有此技能' }
             if (cardIds.length !== 1) return { error: '请选择1张♦牌' }
             if (targets.length !== 1) return { error: '请选择1名目标' }
-            const cardIdx = general.hand.findIndex(c => c.id === cardIds[0])
-            if (cardIdx === -1) return { error: '手牌中找不到该牌' }
-            const card = general.hand[cardIdx]
+            // 支持手牌和装备牌
+            const card = findCardInHandOrEquip(general, cardIds[0])
+            if (!card) return { error: '找不到该牌' }
             if (card.suit !== CardSuit.DIAMOND) return { error: '须为♦牌' }
             const target = targets[0]
             if (target.judgeZone.some(c => c.name === TrickCardName.OVERINDULGENCE)) return { error: '目标已有乐不思蜀' }
-            general.hand.splice(cardIdx, 1)
+            const removedCard = detachCardFromHandOrEquip(state, general, cardIds[0])
+            if ('error' in removedCard) return removedCard
             target.judgeZone.push({
-                ...card,
+                ...removedCard,
+                originalName: removedCard.name,
+                originalCategory: removedCard.category,
                 name: TrickCardName.OVERINDULGENCE,
                 category: CardCategory.TRICK,
                 trickType: TrickType.DELAYED,
@@ -1926,6 +2028,8 @@ export function handleUseSkill(
             if (card1Idx === -1 || card2Idx === -1) return { error: '手牌中找不到选择的牌' }
 
             const target = targets[0]
+            // 不能杀自己
+            if (target === general) return { error: '不能对自己使用【杀】' }
             // 空城
             if (hasSkill(target, 'zhugeliang_kongcheng') && target.hand.length === 0) {
                 return { error: '目标发动空城，不能被杀指定' }
@@ -2226,29 +2330,39 @@ export function handleRespond(
                     return
                 }
                 case 'daqiao_liuli': {
-                    // 流离：弃1牌，将杀转移给攻击范围内另一角色
+                    // 流离：弃1牌（手牌或装备），将杀转移给攻击范围内另一角色
                     const atkCtx = ctx as any
                     const attackerIdx = atkCtx.attackerIndex as number
                     const attacker = state.generals[attackerIdx]
 
-                    // 弃1牌（支持手牌和装备）
-                    let discarded = false
-                    if (data.cardId) {
-                        const result = removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
-                        discarded = !('error' in result)
-                    }
-                    if (!discarded && targetGeneral.hand.length > 0) {
-                        state.discard.push(targetGeneral.hand.splice(0, 1)[0])
-                    }
+                    if (!data.cardId) return { error: '请选择一张牌弃置' }
+                    // 先找到要弃的牌，检查是否是武器
+                    const cardToDiscard = findCardInHandOrEquip(targetGeneral, data.cardId)
+                    if (!cardToDiscard) return { error: '找不到此牌' }
 
-                    // 找攻击范围内的其他角色（排除攻击者和大乔自己）
+                    // 模拟弃牌后的攻击范围：如果弃的是武器，临时移除来计算
+                    const isWeapon = targetGeneral.equip.weapon?.id === data.cardId
+                    const savedWeapon = isWeapon ? targetGeneral.equip.weapon : undefined
+                    if (isWeapon) targetGeneral.equip.weapon = undefined as any
+
+                    // 计算可转移目标
                     const candidates = state.generals.filter(g =>
                         g.alive && g !== targetGeneral && g !== attacker &&
                         getAttackRange(targetGeneral, g, state.generals).inRange
                     )
 
+                    // 恢复武器（还没决定是否弃）
+                    if (isWeapon) targetGeneral.equip.weapon = savedWeapon
+
+                    if (candidates.length === 0) {
+                        return { error: '弃此牌后无法转移目标（攻击范围内无其他角色），请重新选择' }
+                    }
+
+                    // 确认弃牌
+                    const result = removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
+                    if ('error' in result) return result
+
                     if (candidates.length === 1) {
-                        // 唯一候选 → 直接转移
                         const newTarget = candidates[0]
                         addLog(state, `【${name}】发动【流离】，将杀转移给【${getGeneralName(newTarget)}】`)
                         state.pendingResponseQueue.unshift({
@@ -2261,8 +2375,7 @@ export function handleRespond(
                                 attackCard: atkCtx.attackCard,
                             },
                         })
-                    } else if (candidates.length > 1) {
-                        // 多个候选 → 让玩家选
+                    } else {
                         const candidateIndices = candidates.map(g => state.generals.indexOf(g))
                         state.pendingResponseQueue.unshift({
                             type: ResponseType.SKILL_LIULI_REDIRECT,
@@ -2275,19 +2388,6 @@ export function handleRespond(
                             },
                         })
                         addLog(state, `【${name}】发动【流离】，请选择转移目标`)
-                    } else {
-                        // 无可转移目标 → 还是自己接杀
-                        addLog(state, `【${name}】发动【流离】但无可转移目标，仍需出闪`)
-                        state.pendingResponseQueue.unshift({
-                            type: ResponseType.DODGE,
-                            targetGeneralIndex: state.generals.indexOf(targetGeneral),
-                            context: {
-                                attackerGeneralIndex: attackerIdx,
-                                requiredDodges: atkCtx.requiredDodges || 1,
-                                dodgesReceived: 0,
-                                attackCard: atkCtx.attackCard,
-                            },
-                        })
                     }
                     return
                 }
@@ -2385,36 +2485,43 @@ export function handleRespond(
                     return
                 }
                 case 'equip_ice_sword': {
-                    // 寒冰剑：弃目标2张牌，不造成伤害
+                    // 寒冰剑：弃目标2张牌，不造成伤害 → 推交互选牌
                     const isCtx = ctx as any
                     const iceTarget = state.generals[isCtx.targetIndex as number]
                     if (!iceTarget) return { error: '目标不存在' }
 
-                    let discarded = 0
-                    for (let d = 0; d < 2; d++) {
-                        const removed = removeOneCardFrom(iceTarget, state)
-                        if (removed) discarded++
-                    }
-                    addLog(state, `【${name}】发动【寒冰剑】弃了【${getGeneralName(iceTarget)}】${discarded}张牌，不造成伤害`)
+                    state.pendingResponseQueue.unshift({
+                        type: ResponseType.EQUIP_ICE_SWORD_PICK,
+                        targetGeneralIndex: state.generals.indexOf(targetGeneral),
+                        context: {
+                            iceTargetIndex: isCtx.targetIndex as number,
+                            remainingPicks: 2,
+                        },
+                    })
+                    addLog(state, `【${name}】发动【寒冰剑】，请选择弃【${getGeneralName(iceTarget)}】的牌`)
                     return
                 }
                 case 'equip_stone_axe': {
-                    // 贯石斧：弃2张手牌，使杀仍然命中
+                    // 贯石斧：弃2张牌（手牌或装备，不含贯石斧自身），使杀仍然命中
                     const saCtx = ctx as any
                     const saTarget = state.generals[saCtx.targetIndex as number]
                     if (!saTarget?.alive) return { error: '目标不存在' }
 
                     const cardIds = (data as any).cardIds as string[] | undefined
-                    if (!cardIds || cardIds.length !== 2) return { error: '请选择2张手牌弃置' }
+                    if (!cardIds || cardIds.length !== 2) return { error: '请选择2张牌弃置' }
 
-                    // 验证并弃牌
-                    const indices = cardIds.map(id => targetGeneral.hand.findIndex(c => c.id === id))
-                    if (indices.some(i => i === -1)) return { error: '手牌中找不到选择的牌' }
-                    // 从大到小排序以保证 splice 安全
-                    indices.sort((a, b) => b - a)
-                    for (const i of indices) {
-                        const c = targetGeneral.hand.splice(i, 1)[0]
-                        state.discard.push(c)
+                    // 不能弃贯石斧自身
+                    const axeId = targetGeneral.equip.weapon?.id
+                    if (cardIds.includes(axeId!)) return { error: '不能弃置正在使用的贯石斧' }
+
+                    // 验证牌存在
+                    for (const cid of cardIds) {
+                        const card = findCardInHandOrEquip(targetGeneral, cid)
+                        if (!card) return { error: '找不到选择的牌' }
+                    }
+                    // 逐张弃牌
+                    for (const cid of cardIds) {
+                        removeCardFromHandOrEquip(state, targetGeneral, cid)
                     }
 
                     addLog(state, `【${name}】发动【贯石斧】弃2张牌，【杀】仍然命中`)
@@ -2491,28 +2598,38 @@ export function handleRespond(
         case ResponseType.SKILL_YIJI_DISTRIBUTE: {
             const ctx = pending.context as { yijiCardIds: string[]; remaining: number }
             const targetIdx = (data as any).targetIndex as number | undefined
-            // 前端发送 cardId + targetIndex：将手牌中的 cardId 给 targetIndex 的角色
-            if (data.cardId && targetIdx !== undefined) {
-                // 验证这张牌是 yiji 牌之一
-                if (!ctx.yijiCardIds.includes(data.cardId)) return { error: '此牌不是遗计可分配的牌' }
-                const cardIdx = targetGeneral.hand.findIndex(c => c.id === data.cardId)
-                if (cardIdx === -1) return { error: '手牌中找不到此牌' }
-                const card = targetGeneral.hand[cardIdx]
+            // 支持单张 cardId 或多张 cardIds
+            const multiCardIds = (data as any).cardIds as string[] | undefined
+            const singleCardId = data.cardId
+            const cardIdsToGive: string[] = multiCardIds ?? (singleCardId ? [singleCardId] : [])
+
+            if (cardIdsToGive.length > 0 && targetIdx !== undefined) {
+                // 校验数量
+                if (cardIdsToGive.length > ctx.remaining) return { error: `最多还能分配${ctx.remaining}张牌` }
+                // 校验每张牌
+                for (const cid of cardIdsToGive) {
+                    if (!ctx.yijiCardIds.includes(cid)) return { error: '此牌不是遗计可分配的牌' }
+                    const cardIdx = targetGeneral.hand.findIndex(c => c.id === cid)
+                    if (cardIdx === -1) return { error: '手牌中找不到此牌' }
+                }
                 const recipient = state.generals[targetIdx]
                 if (!recipient?.alive) return { error: '目标不存在' }
 
+                const count = cardIdsToGive.length
                 if (recipient !== targetGeneral) {
-                    // 给别人：从手牌移走给对方
-                    targetGeneral.hand.splice(cardIdx, 1)
-                    recipient.hand.push(card)
-                    addLog(state, `【${getGeneralName(targetGeneral)}】将一张牌交给了【${getGeneralName(recipient)}】`)
+                    // 给别人
+                    for (const cid of cardIdsToGive) {
+                        const cardIdx = targetGeneral.hand.findIndex(c => c.id === cid)
+                        const card = targetGeneral.hand.splice(cardIdx, 1)[0]
+                        recipient.hand.push(card)
+                    }
+                    addLog(state, `【${getGeneralName(targetGeneral)}】将${count}张牌交给了【${getGeneralName(recipient)}】`)
                 } else {
-                    // 给自己 = 保留（牌已在手牌中，只需计数）
-                    addLog(state, `【${getGeneralName(targetGeneral)}】保留了一张牌`)
+                    addLog(state, `【${getGeneralName(targetGeneral)}】保留了${count}张牌`)
                 }
 
-                ctx.yijiCardIds = ctx.yijiCardIds.filter(id => id !== data.cardId)
-                ctx.remaining -= 1
+                ctx.yijiCardIds = ctx.yijiCardIds.filter(id => !cardIdsToGive.includes(id))
+                ctx.remaining -= count
                 if (ctx.remaining <= 0) {
                     state.pendingResponseQueue.shift()
                 }
@@ -2582,20 +2699,34 @@ export function handleRespond(
         case ResponseType.SKILL_TUXI_CHOOSE: {
             const ctx = pending.context as { remainingPicks: number; pickedIndices?: number[] }
             if (!ctx.pickedIndices) ctx.pickedIndices = []
-            const targetIdx = (data as any).targetIndex as number | undefined
+            // 支持单目标 targetIndex 或 多目标 targetIndices
+            const singleIdx = (data as any).targetIndex as number | undefined
+            const multiIdx = (data as any).targetIndices as number[] | undefined
+            const targetIndices: number[] = multiIdx ?? (singleIdx !== undefined ? [singleIdx] : [])
 
-            if (targetIdx !== undefined) {
-                const victim = state.generals[targetIdx]
-                if (!victim?.alive || victim.hand.length === 0) return { error: '该角色没有手牌' }
-                if (ctx.pickedIndices.includes(targetIdx)) return { error: '已经选过此角色' }
-                if (targetIdx === pending.targetGeneralIndex) return { error: '不能选自己' }
+            if (targetIndices.length > 0) {
+                // 校验数量
+                if (targetIndices.length > ctx.remainingPicks) return { error: `最多还能选${ctx.remainingPicks}名角色` }
+                // 校验去重
+                const uniqueSet = new Set(targetIndices)
+                if (uniqueSet.size !== targetIndices.length) return { error: '不能选择相同的角色' }
 
-                const randIdx = Math.floor(Math.random() * victim.hand.length)
-                targetGeneral.hand.push(victim.hand.splice(randIdx, 1)[0])
-                addLog(state, `【${getGeneralName(targetGeneral)}】发动【突袭】，获取了【${getGeneralName(victim)}】的一张手牌`)
+                for (const tIdx of targetIndices) {
+                    const victim = state.generals[tIdx]
+                    if (!victim?.alive || victim.hand.length === 0) return { error: `【${getGeneralName(victim)}】没有手牌` }
+                    if (ctx.pickedIndices.includes(tIdx)) return { error: '已经选过此角色' }
+                    if (tIdx === pending.targetGeneralIndex) return { error: '不能选自己' }
+                }
 
-                ctx.pickedIndices.push(targetIdx)
-                ctx.remainingPicks -= 1
+                // 逐个获取手牌
+                for (const tIdx of targetIndices) {
+                    const victim = state.generals[tIdx]
+                    const randIdx = Math.floor(Math.random() * victim.hand.length)
+                    targetGeneral.hand.push(victim.hand.splice(randIdx, 1)[0])
+                    addLog(state, `【${getGeneralName(targetGeneral)}】发动【突袭】，获取了【${getGeneralName(victim)}】的一张手牌`)
+                    ctx.pickedIndices.push(tIdx)
+                    ctx.remainingPicks -= 1
+                }
 
                 if (ctx.remainingPicks <= 0) {
                     state.pendingResponseQueue.shift()
@@ -3148,6 +3279,29 @@ export function handleRespond(
                     targetGeneral.hand.push(equipCard)
                     addLog(state, `【${pickerName}】【顺手牵羊】从【${targetName}】处拿了装备【${cardDisplayName(equipCard)}】`)
                 }
+            } else if (action === 'judge') {
+                // 判定区的牌
+                const judgeCardId = (data as any).cardId as string | undefined
+                if (!judgeCardId) return { error: '请指定判定区的牌' }
+                const judgeIdx = pickTarget.judgeZone.findIndex((c: Card) => c.id === judgeCardId)
+                if (judgeIdx === -1) return { error: '目标判定区没有此牌' }
+                const judgeCard = pickTarget.judgeZone.splice(judgeIdx, 1)[0]
+                const judgeName = judgeCard.name === TrickCardName.OVERINDULGENCE ? '乐不思蜀' : '兵粮寸断'
+                // 恢复原始身份（断粮/国色转换的牌离开判定区后恢复原貌）
+                if (judgeCard.originalName) {
+                    judgeCard.name = judgeCard.originalName
+                    judgeCard.category = judgeCard.originalCategory!
+                    delete judgeCard.originalName
+                    delete judgeCard.originalCategory
+                    delete judgeCard.trickType
+                }
+                if (ctx.trickType === 'dismantle') {
+                    state.discard.push(judgeCard)
+                    addLog(state, `【${pickerName}】【过河拆桥】弃了【${targetName}】判定区的【${judgeName}】`)
+                } else {
+                    targetGeneral.hand.push(judgeCard)
+                    addLog(state, `【${pickerName}】【顺手牵羊】从【${targetName}】判定区拿了【${judgeName}】`)
+                }
             } else {
                 return { error: '无效选择' }
             }
@@ -3263,6 +3417,47 @@ export function handleRespond(
             return
         }
 
+        // ── 寒冰剑：攻击者选择弃目标的牌
+        case ResponseType.EQUIP_ICE_SWORD_PICK: {
+            const ctx = pending.context as { iceTargetIndex: number; remainingPicks: number }
+            const iceTarget = state.generals[ctx.iceTargetIndex]
+            if (!iceTarget?.alive) {
+                state.pendingResponseQueue.shift()
+                return
+            }
+            const action = (data as any).action as string
+
+            if (action === 'hand') {
+                // 随机弃一张手牌
+                if (iceTarget.hand.length === 0) return { error: '目标没有手牌' }
+                const randIdx = Math.floor(Math.random() * iceTarget.hand.length)
+                const card = iceTarget.hand.splice(randIdx, 1)[0]
+                state.discard.push(card)
+                addLog(state, `【${getGeneralName(targetGeneral)}】弃了【${getGeneralName(iceTarget)}】的一张手牌`)
+                checkMingzhe(state, iceTarget, card)
+            } else if (['weapon', 'armor', 'plus_horse', 'minus_horse'].includes(action)) {
+                const slot = action as keyof typeof iceTarget.equip
+                const equipCard = iceTarget.equip[slot]
+                if (!equipCard) return { error: '目标该装备栏为空' }
+                iceTarget.equip[slot] = undefined as any
+                state.discard.push(equipCard)
+                triggerXiaoji(state, iceTarget)
+                addLog(state, `【${getGeneralName(targetGeneral)}】弃了【${getGeneralName(iceTarget)}】的装备【${cardDisplayName(equipCard)}】`)
+                checkMingzhe(state, iceTarget, equipCard)
+            } else {
+                return { error: '无效选择' }
+            }
+
+            ctx.remainingPicks -= 1
+            // 检查目标是否还有牌
+            const totalLeft = iceTarget.hand.length + Object.values(iceTarget.equip).filter(Boolean).length
+            if (ctx.remainingPicks <= 0 || totalLeft === 0) {
+                state.pendingResponseQueue.shift()
+                addLog(state, `寒冰剑效果结束，不造成伤害`)
+            }
+            return
+        }
+
         // ── 五谷丰登选牌
         case ResponseType.HARVEST_PICK: {
             const pool = state.harvestPool ?? []
@@ -3338,20 +3533,17 @@ export function handleRespond(
             }
 
             if (action === 'jiuzhu') {
-                // 赵云救主：失去1血弃1牌，救回濒死角色
+                // 赵云救主：失去1血弃1牌（手牌或装备），救回濒死角色
                 if (!hasSkill(targetGeneral, 'zhaoyun_jiuzhu')) return { error: '你没有【救主】技能' }
                 if (targetGeneral === dyingGeneral) return { error: '不能对自己使用救主' }
                 if (targetGeneral.faction !== dyingGeneral.faction) return { error: '只能救己方角色' }
                 if (targetGeneral.hp <= 1) return { error: '体力不足（需>1）' }
-                if (targetGeneral.hand.length === 0) return { error: '没有手牌可弃' }
-                // 弃1张牌（可让玩家选，先自动弃第一张）
-                const discardCardId = data.cardId
-                let discardIdx = 0
-                if (discardCardId) {
-                    discardIdx = targetGeneral.hand.findIndex(c => c.id === discardCardId)
-                    if (discardIdx === -1) return { error: '手牌中找不到此牌' }
-                }
-                state.discard.push(targetGeneral.hand.splice(discardIdx, 1)[0])
+                const totalCards = targetGeneral.hand.length + Object.values(targetGeneral.equip).filter(Boolean).length
+                if (totalCards === 0) return { error: '没有牌可弃' }
+                // 弃1张牌（手牌或装备）
+                if (!data.cardId) return { error: '请选择一张牌弃置' }
+                const removed = removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
+                if ('error' in removed) return removed
                 dyingGeneral.hp = 1
                 addLog(state, `【${getGeneralName(targetGeneral)}】发动【救主】，弃1牌，救回【${getGeneralName(dyingGeneral)}】`)
                 loseHp(state, targetGeneral, 1)
@@ -3362,14 +3554,12 @@ export function handleRespond(
             }
 
             if (action === 'jijiu' && data.cardId) {
-                // 华佗急救：红色牌当桃
+                // 华佗急救：红色牌当桃（支持手牌和装备牌）
                 if (!hasSkill(targetGeneral, 'huatuo_jijiu')) return { error: '你没有【急救】技能' }
-                const cardIdx = targetGeneral.hand.findIndex(c => c.id === data.cardId)
-                if (cardIdx === -1) return { error: '手牌中找不到此牌' }
-                const card = targetGeneral.hand[cardIdx]
+                const card = findCardInHandOrEquip(targetGeneral, data.cardId)
+                if (!card) return { error: '找不到此牌' }
                 if (card.suit !== CardSuit.HEART && card.suit !== CardSuit.DIAMOND) return { error: '急救需要红色牌' }
-                targetGeneral.hand.splice(cardIdx, 1)
-                state.discard.push(card)
+                removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
                 dyingGeneral.hp = Math.min(dyingGeneral.hp + 1, dyingGeneral.maxHp)
                 addLog(state, `【${getGeneralName(targetGeneral)}】发动【急救】，【${getGeneralName(dyingGeneral)}】回复至 ${dyingGeneral.hp}/${dyingGeneral.maxHp}`)
                 if (dyingGeneral.hp > 0) {
@@ -3401,11 +3591,22 @@ export function handleRespond(
             const declinedIntervenors: number[] = ctx.declinedIntervenors ?? []
 
             if (data.cardId) {
-                // 打出手牌或装备牌替换判定牌
-                const replacementCard = removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
-                if ('error' in replacementCard) return replacementCard
+                const isHuanshi = hasSkill(targetGeneral, 'zhugejin_huanshi')
+                let replacementCard: Card
+                if (isHuanshi) {
+                    // 缓释：可以用手牌或装备牌
+                    const result = removeCardFromHandOrEquip(state, targetGeneral, data.cardId)
+                    if ('error' in result) return result
+                    replacementCard = result
+                } else {
+                    // 鬼才：只能用手牌
+                    const cardIdx = targetGeneral.hand.findIndex(c => c.id === data.cardId)
+                    if (cardIdx === -1) return { error: '手牌中没有此牌' }
+                    replacementCard = targetGeneral.hand.splice(cardIdx, 1)[0]
+                    state.discard.push(replacementCard)
+                }
 
-                const skillName = hasSkill(targetGeneral, 'simayi_guicai') ? '鬼才' : '缓释'
+                const skillName = isHuanshi ? '缓释' : '鬼才'
                 addLog(state, `【${getGeneralName(targetGeneral)}】发动【${skillName}】，将判定牌替换为 ${suitSymbol(replacementCard.suit)}${valueName(replacementCard.value)}`)
 
                 // 原判定牌放到弃牌堆（替换牌成为新的判定牌，放入弃牌堆）
@@ -3542,10 +3743,18 @@ function handleDodgeSucceeded(
     targetGeneral: GeneralInstance,
     ctx: { attackerGeneralIndex: number; attackCard?: Card }
 ): void {
-    const attacker = state.generals[ctx.attackerGeneralIndex]
-
     // 先移除 DODGE pending（必须在 unshift 武器效果之前，否则 shift 会移错对象）
     state.pendingResponseQueue.shift()
+    handleDodgeSucceededAfterRemoval(state, targetGeneral, ctx)
+}
+
+/** 杀被闪成功后的武器效果（DODGE pending 已被移除） */
+function handleDodgeSucceededAfterRemoval(
+    state: GameState,
+    targetGeneral: GeneralInstance,
+    ctx: { attackerGeneralIndex: number; attackCard?: Card }
+): void {
+    const attacker = state.generals[ctx.attackerGeneralIndex]
 
     // 猛进（庞德）：可弃目标一牌（可选）
     if (attacker && hasSkill(attacker, 'pangde_mengjin')) {

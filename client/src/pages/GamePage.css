@@ -562,7 +562,7 @@
 .action-btns {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
     min-width: 100px;
 }
 
@@ -635,6 +635,20 @@
     font-size: 13px;
     margin-right: 6px;
     white-space: nowrap;
+}
+
+.trick-pick-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 8px;
+    width: 100%;
+}
+
+.trick-pick-grid .btn {
+    width: 100%;
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 4px 8px;
 }
 
 /* 花色选择按钮 */

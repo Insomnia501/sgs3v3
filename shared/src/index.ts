@@ -156,6 +156,9 @@ export interface Card {
     equipSlot?: EquipSlot
     trickType?: TrickType
     attackRange?: number    // 武器专属
+    // 技能转换牌在判定区时保存原始身份（断粮/国色等）
+    originalName?: BasicCardName | TrickCardName | EquipmentCardName
+    originalCategory?: CardCategory
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -437,6 +440,7 @@ export enum ResponseType {
     SKILL_EIGHT_TRIGRAMS = 'skill_eight_trigrams',          // 八卦阵：翻牌判定
     NEGATE_CHANCE = 'negate_chance',                       // 无懈可击：询问是否打出
     TRICK_TARGET_CARD_PICK = 'trick_target_card_pick',     // 过河拆桥/顺手牵羊：选目标的牌
+    EQUIP_ICE_SWORD_PICK = 'equip_ice_sword_pick',         // 寒冰剑：选弃目标的牌
     BORROW_SWORD_RESPONSE = 'borrow_sword_response',       // 借刀杀人：出杀或交武器
     // ── 濒死询问 ──
     PEACH_SAVE_ASK = 'peach_save_ask',                     // 逐人询问是否出桃/救主/急救

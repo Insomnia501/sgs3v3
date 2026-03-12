@@ -798,14 +798,15 @@ export function continueDelayedTrickJudge(
     }
 
     // 继续下一张延时锦囊
-    const nextIndex = ctx.currentJudgeIndex + 1
-    const remainingToJudge = ctx.toJudgeCardIds
+    // 从原始列表中取当前索引之后的牌ID，再从judgeZone中查找仍存在的牌
+    const nextCardIds = ctx.toJudgeCardIds.slice(ctx.currentJudgeIndex + 1)
+    const nextToJudge = nextCardIds
         .map(id => general.judgeZone.find(c => c.id === id))
         .filter((c): c is Card => c != null)
 
-    if (nextIndex < remainingToJudge.length) {
+    if (nextToJudge.length > 0) {
         // 还有下一张延时锦囊，递归调用 processNextJudge 开新的无懈窗口
-        processNextJudge(state, general, remainingToJudge, nextIndex, skipAction, skipDraw)
+        processNextJudge(state, general, nextToJudge, 0, skipAction, skipDraw)
     } else {
         // 所有延时锦囊处理完毕，进入后续阶段
         finishJudgePhaseAndContinue(state, general, skipAction, skipDraw)
@@ -891,21 +892,27 @@ export function continueJudgePhase(
     // 结算当前判定
     const result = resolveJudge(state, judgingGeneral, delayedCard, judgeCard, skipAction, skipDraw)
 
-    // 重建 toJudge 列表
-    const toJudge = toJudgeCardIds
+    // 从原始列表中取当前索引之后的牌，查找仍在judgeZone中的
+    const nextCardIds = toJudgeCardIds.slice(currentJudgeIndex + 1)
+    const nextToJudge = nextCardIds
         .map(id => judgingGeneral.judgeZone.find(c => c.id === id))
         .filter((c): c is Card => !!c)
 
-    // 继续下一张
-    const finalResult = processNextJudge(
-        state, judgingGeneral, toJudge, currentJudgeIndex + 1,
-        result.skipAction, result.skipDraw
-    )
+    if (nextToJudge.length > 0) {
+        // 继续下一张
+        const finalResult = processNextJudge(
+            state, judgingGeneral, nextToJudge, 0,
+            result.skipAction, result.skipDraw
+        )
 
-    // 如果没有被新的介入或无懈窗口打断，继续回合流程
-    if ((state.pendingResponseQueue.length === 0 || state.pendingResponseQueue[0].type !== ResponseType.JUDGE_INTERVENE)
-        && !state.negateWindow) {
-        finishJudgePhaseAndContinue(state, judgingGeneral, finalResult.skipDraw, finalResult.skipAction)
+        // 如果没有被新的介入或无懈窗口打断，继续回合流程
+        if ((state.pendingResponseQueue.length === 0 || state.pendingResponseQueue[0].type !== ResponseType.JUDGE_INTERVENE)
+            && !state.negateWindow) {
+            finishJudgePhaseAndContinue(state, judgingGeneral, finalResult.skipAction, finalResult.skipDraw)
+        }
+    } else {
+        // 所有延时锦囊处理完毕
+        finishJudgePhaseAndContinue(state, judgingGeneral, result.skipAction, result.skipDraw)
     }
 }
 
