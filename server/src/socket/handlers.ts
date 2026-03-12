@@ -23,6 +23,8 @@ import {
     getRoomBySocketId,
     getPlayerIdBySocketId,
     removeSocketMapping,
+    touchRoom,
+    deleteRoom,
 } from '../rooms/room-manager'
 import { toClientView, checkGameOver, addLog } from '../core/game-state'
 import { handleUseCard, handleUseSkill, handleRespond, handleNegateRespond, negateWindowTimeout, checkAndOpenNegateWindow, processAutoExecutePending } from '../core/game-actions'
@@ -35,6 +37,7 @@ import { Room } from '../rooms/room-manager'
 
 function broadcastGameState(io: SocketIOServer, room: Room) {
     const { gameState, roomCode } = room
+    touchRoom(room)  // 更新最后活动时间
 
     // 广播前检查是否需要为 AOE 的下一个目标开无懈窗口
     checkAndOpenNegateWindow(gameState)
@@ -92,6 +95,10 @@ function checkAndBroadcastGameOver(io: SocketIOServer, room: Room): boolean {
             reason: result.reason,
         })
         broadcastGameState(io, room)
+        // 30秒后删除房间（给客户端时间显示结果）
+        setTimeout(() => {
+            deleteRoom(room.roomCode)
+        }, 30_000)
         return true
     }
     return false

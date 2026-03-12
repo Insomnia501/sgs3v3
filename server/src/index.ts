@@ -3,6 +3,7 @@ import http from 'http'
 import path from 'path'
 import { Server as SocketIOServer } from 'socket.io'
 import { registerSocketHandlers } from './socket/handlers'
+import { startCleanupTimer } from './rooms/room-manager'
 
 const app = express()
 const server = http.createServer(app)
@@ -40,4 +41,5 @@ app.get('*', (_req, res) => {
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
     console.log(`[Server] Listening on http://localhost:${PORT}`)
+    startCleanupTimer()
 })
