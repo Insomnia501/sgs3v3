@@ -50,14 +50,16 @@ export default function App() {
             },
         })
 
-        // 连接成功后尝试重连
-        s.on('connect', () => {
-            const session = loadSession()
-            if (session) {
-                console.log('[Rejoin] Attempting rejoin...', session.roomCode)
+        // 页面加载时检查是否有保存的会话（刷新恢复场景）
+        // 只在 store 中没有 gameState 时尝试 rejoin（避免与正常 create/join 冲突）
+        const session = loadSession()
+        if (session && !useGameStore.getState().gameState) {
+            console.log('[Rejoin] Page loaded with saved session, attempting rejoin...', session.roomCode)
+            s.on('connect', function onFirstConnect() {
+                s.off('connect', onFirstConnect) // 只执行一次
                 emit.rejoinRoom({ roomCode: session.roomCode, playerId: session.playerId })
-            }
-        })
+            })
+        }
     }, [])
 
     // 根据游戏阶段自动路由
