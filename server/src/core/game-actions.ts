@@ -408,7 +408,7 @@ export function performSkillJudge(
     state.discard.push(judgeCard)
 
     const name = getGeneralName(judgingGeneral)
-    addLog(state, `【${name}】的【${judgeName}】判定：${suitSymbol(judgeCard.suit)}${valueName(judgeCard.value)}`)
+    addLog(state, `【${name}】的【${judgeName}】判定：${cardFullName(judgeCard)}`)
 
     // 检查鬼才/缓释
     const intervenor = findJudgeIntervenor(state, judgingGeneral)
@@ -494,7 +494,7 @@ export function resolveSkillJudge(
                 const discardIdx = state.discard.indexOf(judgeCard)
                 if (discardIdx >= 0) state.discard.splice(discardIdx, 1)
                 judgingGeneral.hand.push(judgeCard)
-                addLog(state, `【${name}】【洛神】判定黑色！获得此牌`)
+                addLog(state, `【${name}】【洛神】判定黑色！获得${cardFullName(judgeCard)}`)
                 // 询问是否继续
                 if (state.deck.length > 0) {
                     state.pendingResponseQueue.unshift({
@@ -508,7 +508,7 @@ export function resolveSkillJudge(
                     })
                 }
             } else {
-                addLog(state, `【${name}】【洛神】判定红色，停止`)
+                addLog(state, `【${name}】【洛神】判定红色（${cardFullName(judgeCard)}），停止`)
                 checkTiandu(state, judgingGeneral, judgeCard)
             }
             break
@@ -2173,13 +2173,22 @@ export function handleRespond(
                     dealDamage(state, atk, targetGeneral, txCtx.damageAmount, txCtx.damageCardId)
                 }
 
-                // 神速一放弃 → 正常执行判定+摸牌+出牌
                 if (ctx.skillId === 'xiahoyuan_shensu_1') {
+                    console.log('[DEBUG-SHENSU] shensu_1 decline, calling continueTurnFromJudge(false,false,false)')
+                    console.log('[DEBUG-SHENSU] queue before:', state.pendingResponseQueue.map(p => p.type))
                     continueTurnFromJudge(state, false, false, false)
+                    console.log('[DEBUG-SHENSU] queue after continueTurnFromJudge:', state.pendingResponseQueue.map(p => p.type))
+                    console.log('[DEBUG-SHENSU] turnPhase:', state.turnPhase)
                 }
 
                 // 神速二放弃 → 继续出牌阶段（什么都不做）
-                // (ctx.skillId === 'xiahoyuan_shensu_2') — 无需额外处理
+                if (ctx.skillId === 'xiahoyuan_shensu_2') {
+                    console.log('[DEBUG-SHENSU] shensu_2 decline')
+                    console.log('[DEBUG-SHENSU] turnPhase:', state.turnPhase)
+                    console.log('[DEBUG-SHENSU] queue:', state.pendingResponseQueue.map(p => p.type))
+                    console.log('[DEBUG-SHENSU] activeGeneralIndex:', state.activeGeneralIndex)
+                    console.log('[DEBUG-SHENSU] attackUsedThisTurn:', state.attackUsedThisTurn)
+                }
 
                 // 青龙偃月刀放弃 → 不追杀（什么都不做）
                 // (ctx.skillId === 'equip_green_dragon') — 无需额外处理

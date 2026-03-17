@@ -13,6 +13,7 @@ import {
     C2S_Discard,
     C2S_YieldChoice,
     C2S_NegateRespond,
+    Faction,
 } from 'sgs3v3-shared'
 import {
     createRoom,
@@ -344,7 +345,32 @@ export function registerSocketHandlers(io: SocketIOServer, socket: Socket) {
         }
     })
 
-    // ─── 断线处理 ──────────────────────────────────────────
+    // ─── 认输 ──────────────────────────────────────────────
+    socket.on(SocketEvents.SURRENDER, () => {
+        const room = getRoomBySocketId(socket.id)
+        const playerId = getPlayerIdBySocketId(socket.id)
+        if (!room || !playerId) return
+        if (room.gameState.phase !== GamePhase.PLAYING) return
+
+        const isWarm = room.gameState.warmPlayerId === playerId
+        const loserFaction = isWarm ? Faction.WARM : Faction.COOL
+        const winnerFaction = isWarm ? Faction.COOL : Faction.WARM
+        const player = room.gameState.players[playerId]
+        const nickname = player?.nickname ?? '未知'
+
+        addLog(room.gameState, `【${nickname}】认输！`)
+        room.gameState.phase = GamePhase.GAME_OVER
+        io.to(`room:${room.roomCode}`).emit(SocketEvents.GAME_OVER, {
+            winnerFaction,
+            reason: `${loserFaction === Faction.WARM ? '暖色方' : '冷色方'}认输`,
+        })
+        broadcastGameState(io, room)
+        setTimeout(() => {
+            deleteRoom(room.roomCode)
+        }, 30_000)
+    })
+
+    // ─── 断线 ──────────────────────────────────────────────
     socket.on('disconnect', () => {
         const room = getRoomBySocketId(socket.id)
         const playerId = getPlayerIdBySocketId(socket.id)

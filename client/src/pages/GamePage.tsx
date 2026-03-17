@@ -1473,7 +1473,12 @@ export default function GamePage() {
           </div>
           {/* 右侧日志面板 */}
           <div className="game-log-sidebar">
-            <div className="game-log-sidebar-header">游戏日志</div>
+            <div className="game-log-sidebar-header">
+                <span>游戏日志</span>
+                <button className="btn-surrender" onClick={() => {
+                    if (window.confirm('确定要认输吗？')) emit.surrender()
+                }}>认输</button>
+            </div>
             <div className="action-log">
                 {[...log].reverse().map((entry, i) => (
                     <div key={i} className="log-entry">{highlightLogText(entry.text)}</div>

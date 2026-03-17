@@ -389,7 +389,7 @@ export function runTurnStart(state: GameState): void {
                 const discardIdx = state.discard.indexOf(judgeCard)
                 if (discardIdx >= 0) state.discard.splice(discardIdx, 1)
                 general.hand.push(judgeCard)
-                addLog(state, `【${name}】【洛神】判定黑色！获得此牌`)
+                addLog(state, `【${name}】【洛神】判定黑色！获得${cardFullName(judgeCard)}`)
                 if (state.deck.length > 0) {
                     state.pendingResponseQueue.push({
                         type: ResponseType.SKILL_ACTIVATE_CONFIRM,
@@ -402,7 +402,7 @@ export function runTurnStart(state: GameState): void {
                     })
                 }
             } else {
-                addLog(state, `【${name}】【洛神】判定红色，停止`)
+                addLog(state, `【${name}】【洛神】判定红色（${cardFullName(judgeCard)}），停止`)
                 checkTiandu(state, general, judgeCard)
             }
         }
@@ -967,13 +967,16 @@ export function handleDiscard(
         return { error: `需要弃置 ${mustDiscard} 张牌` }
     }
 
+    const discarded: Card[] = []
     for (const id of cardIds) {
         const idx = general.hand.findIndex(c => c.id === id)
         if (idx === -1) return { error: `手牌中没有牌 ${id}` }
-        state.discard.push(general.hand.splice(idx, 1)[0])
+        discarded.push(general.hand.splice(idx, 1)[0])
     }
+    state.discard.push(...discarded)
 
-    addLog(state, `【${getGeneralName(general)}】弃置了 ${mustDiscard} 张牌`)
+    const cardNames = discarded.map(c => cardFullName(c)).join('、')
+    addLog(state, `【${getGeneralName(general)}】弃置了 ${mustDiscard} 张牌：${cardNames}`)
     finishTurn(state)
 }
 

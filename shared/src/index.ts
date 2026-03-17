@@ -544,6 +544,7 @@ export const SocketEvents = {
     DISCARD: 'discard',
     YIELD_CHOICE: 'yield_choice',
     NEGATE_RESPOND: 'negate_respond',
+    SURRENDER: 'surrender',
     ROOM_CREATED: 'room_created',
     ROOM_JOINED: 'room_joined',
     REJOIN_OK: 'rejoin_ok',

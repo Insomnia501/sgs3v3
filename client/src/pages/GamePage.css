@@ -33,6 +33,26 @@
     color: var(--color-gold);
     border-bottom: 1px solid var(--color-border);
     letter-spacing: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.btn-surrender {
+    font-size: 11px;
+    padding: 2px 10px;
+    background: rgba(220, 50, 50, 0.25);
+    color: #e55;
+    border: 1px solid rgba(220, 50, 50, 0.5);
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    letter-spacing: 1px;
+    transition: background 0.2s, color 0.2s;
+}
+.btn-surrender:hover {
+    background: rgba(220, 50, 50, 0.5);
+    color: #fff;
 }
 
 .game-log-sidebar .action-log {

@@ -106,6 +106,9 @@ export const emit = {
 
     negateRespond: (data: C2S_NegateRespond) =>
         getSocket().emit(SocketEvents.NEGATE_RESPOND, data),
+
+    surrender: () =>
+        getSocket().emit(SocketEvents.SURRENDER),
 }
 
 // ── 监听事件 ────────────────────────────────────────────────
