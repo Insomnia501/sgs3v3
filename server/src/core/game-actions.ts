@@ -983,14 +983,24 @@ export function handleUseCard(
     data: C2S_UseCard
 ): { error: string } | void {
     const general = getActiveGeneral(state)
-    if (!general || general.playerId !== playerId) return { error: '不是你的出牌阶段' }
-    if (state.turnPhase !== TurnPhase.ACTION) return { error: '当前不是出牌阶段' }
+    if (!general || general.playerId !== playerId) {
+        console.log(`[DEBUG-USE] rejected: not active general. playerId=${playerId}, active=${general?.playerId}`)
+        return { error: '不是你的出牌阶段' }
+    }
+    if (state.turnPhase !== TurnPhase.ACTION) {
+        console.log(`[DEBUG-USE] rejected: turnPhase=${state.turnPhase}, negateWindow=${!!state.negateWindow}, pendingQueue=${state.pendingResponseQueue.length}`)
+        return { error: '当前不是出牌阶段' }
+    }
 
     const cardIdx = general.hand.findIndex((c) => c.id === data.cardId)
-    if (cardIdx === -1) return { error: '手牌中没有此牌' }
+    if (cardIdx === -1) {
+        console.log(`[DEBUG-USE] rejected: card ${data.cardId} not in hand`)
+        return { error: '手牌中没有此牌' }
+    }
 
     const card = general.hand[cardIdx]
     const targets = data.targetIndices.map((i) => state.generals[i]).filter((g) => g?.alive)
+    console.log(`[DEBUG-USE] ${getGeneralName(general)} plays ${card.name}, targets=[${data.targetIndices}], negateWindow=${!!state.negateWindow}`)
 
     // asSkill 转换：将牌转换为技能使用（奇袭/断粮/国色等）
     if (data.asSkill) {
