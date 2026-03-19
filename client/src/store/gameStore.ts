@@ -12,6 +12,7 @@ interface AppState {
     nickname: string
     roomCode: string | null
     myFaction: Faction | null
+    isSpectator: boolean
 
     // 游戏状态
     gameState: GameStateClientView | null
@@ -29,6 +30,7 @@ interface AppState {
     setNickname: (n: string) => void
     setRoomCode: (code: string) => void
     setMyFaction: (f: Faction) => void
+    setIsSpectator: (v: boolean) => void
     setGameState: (state: GameStateClientView) => void
     setWinnerFaction: (f: Faction | null) => void
     setError: (msg: string | null) => void
@@ -42,6 +44,7 @@ export const useGameStore = create<AppState>((set) => ({
     nickname: '',
     roomCode: null,
     myFaction: null,
+    isSpectator: false,
     gameState: null,
     winnerFaction: null,
     selectedCardIds: [],
@@ -52,6 +55,7 @@ export const useGameStore = create<AppState>((set) => ({
     setNickname: (n) => set({ nickname: n }),
     setRoomCode: (code) => set({ roomCode: code }),
     setMyFaction: (f) => set({ myFaction: f }),
+    setIsSpectator: (v) => set({ isSpectator: v }),
     setGameState: (state) => set({ gameState: state }),
     setWinnerFaction: (f) => set({ winnerFaction: f }),
     setError: (msg) => set({ error: msg }),

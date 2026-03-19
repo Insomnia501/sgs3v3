@@ -18,6 +18,14 @@ export interface Room {
     roomCode: string
     gameState: GameState
     lastActivity: number  // 最后活动时间戳
+    spectators: Map<string, Spectator>  // spectatorId → Spectator
+}
+
+export interface Spectator {
+    id: string
+    socketId: string
+    nickname: string
+    faction: Faction  // 当前观战视角
 }
 
 /** 全局房间表：roomCode → Room */
@@ -28,6 +36,9 @@ const socketToRoom = new Map<string, string>()
 
 /** socketId → playerId（核心映射：通过 socket 确定玩家身份） */
 const socketToPlayer = new Map<string, string>()
+
+/** socketId → spectatorId */
+const socketToSpectator = new Map<string, string>()
 
 /** 房间超时时间：2小时 */
 const ROOM_TIMEOUT_MS = 2 * 60 * 60 * 1000
@@ -91,7 +102,7 @@ export function createRoom(socketId: string, nickname: string): { room: Room; pl
         log: [],
     }
 
-    const room: Room = { roomCode, gameState, lastActivity: Date.now() }
+    const room: Room = { roomCode, gameState, lastActivity: Date.now(), spectators: new Map() }
     rooms.set(roomCode, room)
     socketToRoom.set(socketId, roomCode)
     socketToPlayer.set(socketId, playerId)
@@ -107,13 +118,15 @@ export function joinRoom(
     socketId: string,
     roomCode: string,
     nickname: string
-): { room: Room; playerId: string } | { error: string } {
+): { room: Room; playerId: string } | { room: Room; spectatorId: string; isSpectator: true } | { error: string } {
     const room = rooms.get(roomCode)
     if (!room) return { error: '房间不存在' }
-    if (room.gameState.phase !== GamePhase.WAITING) return { error: '游戏已开始' }
 
+    // 房间已有2人或游戏已开始 → 观战模式
     const existingPlayers = Object.keys(room.gameState.players)
-    if (existingPlayers.length >= 2) return { error: '房间已满' }
+    if (existingPlayers.length >= 2 || room.gameState.phase !== GamePhase.WAITING) {
+        return joinAsSpectator(socketId, room, nickname)
+    }
 
     const playerId = uuidv4()
     const creatorId = existingPlayers[0]
@@ -382,6 +395,15 @@ export function touchRoom(room: Room): void {
 
 /** 删除房间并清理关联的 socket 映射 */
 export function deleteRoom(roomCode: string): void {
+    const room = rooms.get(roomCode)
+    // 清除观战者
+    if (room) {
+        for (const [, spec] of room.spectators) {
+            socketToSpectator.delete(spec.socketId)
+            socketToRoom.delete(spec.socketId)
+        }
+        room.spectators.clear()
+    }
     rooms.delete(roomCode)
     // 清理指向该房间的 socket 映射
     for (const [socketId, rc] of socketToRoom.entries()) {
@@ -415,4 +437,60 @@ export function startCleanupTimer(): void {
         cleanupInactiveRooms()
     }, CLEANUP_INTERVAL_MS)
     console.log(`[Cleanup] Auto-cleanup timer started (interval: ${CLEANUP_INTERVAL_MS / 60000}min, timeout: ${ROOM_TIMEOUT_MS / 3600000}h)`)
+}
+
+// ──────────────────────────────────────────────────────────
+// 观战者管理
+// ──────────────────────────────────────────────────────────
+
+function joinAsSpectator(
+    socketId: string,
+    room: Room,
+    nickname: string
+): { room: Room; spectatorId: string; isSpectator: true } {
+    const spectatorId = uuidv4()
+    const spectator: Spectator = {
+        id: spectatorId,
+        socketId,
+        nickname,
+        faction: Faction.WARM,
+    }
+    room.spectators.set(spectatorId, spectator)
+    socketToRoom.set(socketId, room.roomCode)
+    socketToSpectator.set(socketId, spectatorId)
+    console.log(`[Room] Spectator "${nickname}" (${spectatorId}) joined ${room.roomCode}`)
+    return { room, spectatorId, isSpectator: true }
+}
+
+export function getSpectatorIdBySocketId(socketId: string): string | undefined {
+    return socketToSpectator.get(socketId)
+}
+
+export function switchSpectatorFaction(socketId: string): Faction | undefined {
+    const specId = socketToSpectator.get(socketId)
+    if (!specId) return undefined
+    const roomCode = socketToRoom.get(socketId)
+    if (!roomCode) return undefined
+    const room = rooms.get(roomCode)
+    if (!room) return undefined
+    const spec = room.spectators.get(specId)
+    if (!spec) return undefined
+    spec.faction = spec.faction === Faction.WARM ? Faction.COOL : Faction.WARM
+    return spec.faction
+}
+
+export function removeSpectatorMapping(socketId: string): void {
+    const roomCode = socketToRoom.get(socketId)
+    if (roomCode) {
+        const room = rooms.get(roomCode)
+        if (room) {
+            for (const [id, spec] of room.spectators) {
+                if (spec.socketId === socketId) {
+                    room.spectators.delete(id)
+                    break
+                }
+            }
+        }
+    }
+    socketToSpectator.delete(socketId)
 }

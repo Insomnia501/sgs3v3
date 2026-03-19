@@ -206,7 +206,7 @@ function highlightLogText(text: string) {
 
 export default function GamePage() {
     const {
-        gameState, myFaction,
+        gameState, myFaction, isSpectator,
         selectedCardIds, selectedTargets,
         toggleCardSelection, toggleTargetSelection, clearSelection,
     } = useGameStore()
@@ -258,15 +258,16 @@ export default function GamePage() {
     const myGenerals = myFaction === Faction.WARM ? [...myRaw].reverse() : myRaw
     const oppGenerals = myFaction === Faction.WARM ? oppRaw : [...oppRaw].reverse()
 
-    const isMyTurn = activePlayerFaction === myFaction
+    const isMyTurn = !isSpectator && activePlayerFaction === myFaction
     const activeGeneral = generals[activeGeneralIndex]
     const isActionPhase = turnPhase === TurnPhase.ACTION
     const isDiscardPhase = turnPhase === TurnPhase.DISCARD
     const myPendingResponse =
+        !isSpectator &&
         pendingResponse &&
         generals[pendingResponse.targetGeneralIndex]?.faction === myFaction
 
-    const canInteractWithHand = (isActionPhase || isDiscardPhase || myPendingResponse) &&
+    const canInteractWithHand = !isSpectator && (isActionPhase || isDiscardPhase || myPendingResponse) &&
         (activeGeneral?.faction === myFaction || !!myPendingResponse)
 
     // 是否需要选择行动单元：step=0（先手选）或 step=2（后手选）或 step=4/5（剩余边锋选顺序），且轮到我方
@@ -1474,10 +1475,20 @@ export default function GamePage() {
           {/* 右侧日志面板 */}
           <div className="game-log-sidebar">
             <div className="game-log-sidebar-header">
-                <span>游戏日志</span>
-                <button className="btn-surrender" onClick={() => {
-                    if (window.confirm('确定要认输吗？')) emit.surrender()
-                }}>认输</button>
+                <span>{isSpectator ? '👁 观战中' : '游戏日志'}</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                    {isSpectator && (
+                        <button className="btn-surrender" style={{ background: 'rgba(50,150,220,0.25)', color: '#5af', borderColor: 'rgba(50,150,220,0.5)' }}
+                            onClick={() => emit.switchSpectateFaction()}>
+                            切换视角
+                        </button>
+                    )}
+                    {!isSpectator && (
+                        <button className="btn-surrender" onClick={() => {
+                            if (window.confirm('确定要认输吗？')) emit.surrender()
+                        }}>认输</button>
+                    )}
+                </div>
             </div>
             <div className="action-log">
                 {[...log].reverse().map((entry, i) => (

@@ -397,6 +397,7 @@ export interface GameStateClientView {
     roundState: RoundState
     harvestPool?: Card[]
     log: LogEntry[]
+    isSpectator?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -545,8 +546,10 @@ export const SocketEvents = {
     YIELD_CHOICE: 'yield_choice',
     NEGATE_RESPOND: 'negate_respond',
     SURRENDER: 'surrender',
+    SWITCH_SPECTATE_FACTION: 'switch_spectate_faction',
     ROOM_CREATED: 'room_created',
     ROOM_JOINED: 'room_joined',
+    SPECTATE_JOIN: 'spectate_join',
     REJOIN_OK: 'rejoin_ok',
     REJOIN_FAIL: 'rejoin_fail',
     ROOM_UPDATE: 'room_update',

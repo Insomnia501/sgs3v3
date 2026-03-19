@@ -13,7 +13,7 @@ import './GeneralPickPage.css'
 
 export default function GeneralPickPage() {
     const navigate = useNavigate()
-    const { gameState, myFaction } = useGameStore()
+    const { gameState, myFaction, isSpectator } = useGameStore()
     const [deploySelection, setDeploySelection] = useState<{
         commander?: string
         flankA?: string
@@ -29,10 +29,25 @@ export default function GeneralPickPage() {
 
     const { phase, pickState, deployState } = gameState
 
+    // 观战者在部署阶段看到等待提示
+    if (isSpectator && phase === GamePhase.DEPLOY) {
+        return (
+            <div className="pick-page">
+                <div className="pick-header">
+                    <div className="pick-title page-title">武将部署</div>
+                    <div className="pick-my-turn-badge" style={{ background: 'rgba(255,180,0,0.15)', color: '#ffb400' }}>👁 观战中</div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, fontSize: 20, color: '#aaa' }}>
+                    正在部署中，请稍后...
+                </div>
+            </div>
+        )
+    }
+
     // ── 选将阶段 ──────────────────────────────────────────────
     if (phase === GamePhase.GENERAL_PICK && pickState) {
         const currentFaction = PICK_SEQUENCE[pickState.pickStep]
-        const isMyTurn = currentFaction === myFaction
+        const isMyTurn = !isSpectator && currentFaction === myFaction
         const pickedIds = new Set([
             ...pickState.warmPicked.map((g) => g.id),
             ...pickState.coolPicked.map((g) => g.id),
@@ -50,6 +65,7 @@ export default function GeneralPickPage() {
                         <span className="pick-step">（{pickState.pickStep + 1} / 16）</span>
                     </div>
                     {isMyTurn && <div className="pick-my-turn-badge">轮到你选了！</div>}
+                    {isSpectator && <div className="pick-my-turn-badge" style={{ background: 'rgba(255,180,0,0.15)', color: '#ffb400' }}>👁 观战中</div>}
                 </div>
 
                 <div className="pick-main">

@@ -9,7 +9,7 @@ import GamePage from './pages/GamePage'
 import GameOverPage from './pages/GameOverPage'
 
 export default function App() {
-    const { setGameState, setError, setPlayerId, setMyFaction, gameState } = useGameStore()
+    const { setGameState, setError, setPlayerId, setMyFaction, setIsSpectator, gameState } = useGameStore()
     const setWinnerFaction = useGameStore((s) => s.setWinnerFaction)
 
     useEffect(() => {
@@ -26,6 +26,10 @@ export default function App() {
                 // roomCode 在 joinRoom 时已知，从 store 获取
                 const rc = useGameStore.getState().roomCode
                 if (rc) saveSession(data.playerId, rc)
+            },
+            onSpectateJoin: (data) => {
+                setIsSpectator(true)
+                useGameStore.setState({ roomCode: data.roomCode })
             },
             onRejoinOk: (data) => {
                 setPlayerId(data.playerId)

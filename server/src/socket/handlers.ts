@@ -24,11 +24,14 @@ import {
     deployGenerals,
     getRoomBySocketId,
     getPlayerIdBySocketId,
+    getSpectatorIdBySocketId,
+    switchSpectatorFaction,
     removeSocketMapping,
+    removeSpectatorMapping,
     touchRoom,
     deleteRoom,
 } from '../rooms/room-manager'
-import { toClientView, checkGameOver, addLog } from '../core/game-state'
+import { toClientView, toSpectatorView, checkGameOver, addLog } from '../core/game-state'
 import { handleUseCard, handleUseSkill, handleRespond, handleNegateRespond, negateWindowTimeout, checkAndOpenNegateWindow, processAutoExecutePending } from '../core/game-actions'
 import { handleEndTurn, handleDiscard, chooseActionUnit, startNewRound, handleYieldChoice } from '../core/turn-manager'
 import { Room } from '../rooms/room-manager'
@@ -53,6 +56,12 @@ function broadcastGameState(io: SocketIOServer, room: Room) {
     for (const playerId of Object.keys(gameState.players)) {
         const view = toClientView(gameState, playerId)
         io.to(`player:${playerId}`).emit(SocketEvents.GAME_STATE_UPDATE, { state: view })
+    }
+
+    // 广播给观战者
+    for (const [, spec] of room.spectators) {
+        const view = toSpectatorView(gameState, spec.faction)
+        io.to(`spectator:${spec.id}`).emit(SocketEvents.GAME_STATE_UPDATE, { state: view })
     }
 
     // 无懈可击窗口：无人有无懈时自动 3 秒后结算
@@ -135,6 +144,21 @@ export function registerSocketHandlers(io: SocketIOServer, socket: Socket) {
             const result = joinRoom(socket.id, data.roomCode.toUpperCase(), data.nickname)
             if ('error' in result) {
                 return socket.emit(SocketEvents.ERROR, { message: result.error })
+            }
+
+            // 观战者加入
+            if ('isSpectator' in result) {
+                const { room, spectatorId } = result
+                socket.join(`spectator:${spectatorId}`)
+                socket.join(`room:${room.roomCode}`)
+                socket.emit(SocketEvents.SPECTATE_JOIN, {
+                    spectatorId,
+                    roomCode: room.roomCode,
+                })
+                // 立即发送当前游戏状态
+                const view = toSpectatorView(room.gameState, Faction.WARM)
+                socket.emit(SocketEvents.GAME_STATE_UPDATE, { state: view })
+                return
             }
 
             const { room, playerId } = result
@@ -370,10 +394,22 @@ export function registerSocketHandlers(io: SocketIOServer, socket: Socket) {
         }, 30_000)
     })
 
+    // ─── 切换观战视角 ──────────────────────────────────────
+    socket.on(SocketEvents.SWITCH_SPECTATE_FACTION, () => {
+        const room = getRoomBySocketId(socket.id)
+        if (!room) return
+        const newFaction = switchSpectatorFaction(socket.id)
+        if (newFaction === undefined) return
+        const view = toSpectatorView(room.gameState, newFaction)
+        socket.emit(SocketEvents.GAME_STATE_UPDATE, { state: view })
+    })
+
     // ─── 断线 ──────────────────────────────────────────────
     socket.on('disconnect', () => {
         const room = getRoomBySocketId(socket.id)
         const playerId = getPlayerIdBySocketId(socket.id)
+        const spectatorId = getSpectatorIdBySocketId(socket.id)
+
         if (room && playerId) {
             const player = room.gameState.players[playerId]
             if (player) {
@@ -381,6 +417,10 @@ export function registerSocketHandlers(io: SocketIOServer, socket: Socket) {
                 addLog(room.gameState, `【${player.nickname}】断线`)
                 broadcastGameState(io, room)
             }
+        }
+
+        if (spectatorId) {
+            removeSpectatorMapping(socket.id)
         }
         removeSocketMapping(socket.id)
     })

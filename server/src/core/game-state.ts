@@ -108,6 +108,68 @@ export function toClientView(
 }
 
 /**
+ * 将服务端完整 GameState 转换为观战者视图
+ * - 观战者以所选阵营为视角，可以看到该阵营的手牌
+ * - 部署阶段不显示部署信息
+ */
+export function toSpectatorView(
+    state: GameState,
+    viewFaction: Faction
+): GameStateClientView {
+    const isDeploy = state.phase === GamePhase.DEPLOY
+
+    const generals: GeneralClientView[] = state.generals.map((g) => {
+        const isViewFaction = g.faction === viewFaction
+        return {
+            generalId: g.generalId,
+            faction: g.faction,
+            seatRole: g.seatRole,
+            hp: g.hp,
+            maxHp: g.maxHp,
+            handCount: g.hand.length,
+            hand: isViewFaction ? g.hand : undefined,
+            equip: g.equip,
+            judgeZone: g.judgeZone,
+            alive: g.alive,
+            hasActed: g.hasActed,
+            awakened: g.awakened,
+            loyaltyCard: g.loyaltyCard,
+            skillsUsedThisTurn: g.skillsUsedThisTurn,
+            usedLimitedSkills: g.usedLimitedSkills,
+        }
+    })
+
+    return {
+        roomId: state.roomId,
+        phase: state.phase,
+        myPlayerId: '',
+        myFaction: viewFaction,
+        pickState: state.pickState,
+        deployState: isDeploy ? undefined : state.deployState,
+        generals: isDeploy ? [] : generals,
+        deckCount: state.deck.length,
+        discardTop: state.discard[state.discard.length - 1],
+        turnPhase: state.turnPhase,
+        activePlayerFaction: state.activePlayerFaction,
+        currentActionUnit: state.currentActionUnit,
+        activeGeneralIndex: state.activeGeneralIndex,
+        attackUsedThisTurn: state.attackUsedThisTurn,
+        pendingResponse: state.pendingResponseQueue[0],
+        negateWindow: state.negateWindow ? {
+            trickCardName: state.negateWindow.trickCardName,
+            trickTargetName: state.negateWindow.trickTargetName,
+            isCurrentlyNegated: state.negateWindow.isCurrentlyNegated,
+            anyoneHasNegate: state.negateWindow.anyoneHasNegate,
+            startedAt: state.negateWindow.startedAt,
+        } : undefined,
+        roundState: state.roundState,
+        harvestPool: state.harvestPool,
+        log: state.log.slice(-50),
+        isSpectator: true,
+    }
+}
+
+/**
  * 添加日志条目
  */
 export function addLog(state: GameState, text: string): void {

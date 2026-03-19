@@ -109,6 +109,9 @@ export const emit = {
 
     surrender: () =>
         getSocket().emit(SocketEvents.SURRENDER),
+
+    switchSpectateFaction: () =>
+        getSocket().emit(SocketEvents.SWITCH_SPECTATE_FACTION),
 }
 
 // ── 监听事件 ────────────────────────────────────────────────
@@ -116,6 +119,7 @@ export const emit = {
 export type SocketEventHandlers = {
     onRoomCreated?: (data: S2C_RoomCreated) => void
     onRoomJoined?: (data: S2C_RoomJoined) => void
+    onSpectateJoin?: (data: { spectatorId: string; roomCode: string }) => void
     onRejoinOk?: (data: { playerId: string; roomCode: string }) => void
     onRejoinFail?: (data: { message: string }) => void
     onGameStateUpdate?: (data: S2C_GameStateUpdate) => void
@@ -127,6 +131,7 @@ export function registerSocketListeners(handlers: SocketEventHandlers) {
     const s = getSocket()
     if (handlers.onRoomCreated) s.on(SocketEvents.ROOM_CREATED, handlers.onRoomCreated)
     if (handlers.onRoomJoined) s.on(SocketEvents.ROOM_JOINED, handlers.onRoomJoined)
+    if (handlers.onSpectateJoin) s.on(SocketEvents.SPECTATE_JOIN, handlers.onSpectateJoin)
     if (handlers.onRejoinOk) s.on(SocketEvents.REJOIN_OK, handlers.onRejoinOk)
     if (handlers.onRejoinFail) s.on(SocketEvents.REJOIN_FAIL, handlers.onRejoinFail)
     if (handlers.onGameStateUpdate) s.on(SocketEvents.GAME_STATE_UPDATE, handlers.onGameStateUpdate)
@@ -138,6 +143,7 @@ export function unregisterSocketListeners(handlers: SocketEventHandlers) {
     const s = getSocket()
     if (handlers.onRoomCreated) s.off(SocketEvents.ROOM_CREATED, handlers.onRoomCreated)
     if (handlers.onRoomJoined) s.off(SocketEvents.ROOM_JOINED, handlers.onRoomJoined)
+    if (handlers.onSpectateJoin) s.off(SocketEvents.SPECTATE_JOIN, handlers.onSpectateJoin)
     if (handlers.onRejoinOk) s.off(SocketEvents.REJOIN_OK, handlers.onRejoinOk)
     if (handlers.onRejoinFail) s.off(SocketEvents.REJOIN_FAIL, handlers.onRejoinFail)
     if (handlers.onGameStateUpdate) s.off(SocketEvents.GAME_STATE_UPDATE, handlers.onGameStateUpdate)
